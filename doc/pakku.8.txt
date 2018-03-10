@@ -1,0 +1,46 @@
+pakku(8)
+========
+
+Name
+----
+pakku - package manager utility wrapper
+
+Synopsis
+--------
+'pakku' <operation> [options] [targets]
+
+Description
+-----------
+Pakku is a pacman wrapper with additional features, such as AUR support.
+
+Operations and Options
+----------------------
+Pakku provides all operations and options from pacman. This page will focus
+on pakku-specific options only. See linkman:pacman[8] for additional
+information.
+
+Query Options (apply to '-Q')[[QO]]
+-----------------------------------
+*-t, \--unrequired*::
+	Specify this option thrice combining with '-d' to list dependencies
+	which are not required by any explicitly installed package.
+
+Sync Options (apply to '-S')[[SO]]
+----------------------------------
+*\--build*::
+	Build packages from source. Building is supported for directly specified
+	packages only, so it will not work for package groups or virtual packages.
+
+*\--noaur*::
+	Disable AUR support. This option is assumed when you use non-standard
+	root path, allow downgrading using twice specified '-u', skip dependency
+	checking using '-d', or run the program from root.
+
+Configuration
+-------------
+See linkman:pacman.conf[5] and linkman:pakku.conf[5] for details on configuring
+the program.
+
+See Also
+--------
+linkman:pacman[8], linkman:pacman.conf[5], linkman:pakku.conf[5]

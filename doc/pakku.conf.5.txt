@@ -1,0 +1,41 @@
+pakku.conf(5)
+=============
+
+Name
+----
+pakku.conf - pakku configuration file
+
+Synopsis
+--------
+\{sysconfdir\}/pakku.conf
+
+Description
+-----------
+This configuration file uses a similar format to pacman.conf. The file is
+divided into sections. Only options section is used.
+
+Options
+-------
+*TmpDir =* path/to/tmp/dir::
+	Set the temporary directory in which pakku will perform all
+	building operations. The default value is +/tmp/pakku-$\{USER\}+.
+
+*AurComments*::
+	Download and display comments for AUR packages.
+
+*CheckIgnored*::
+	Check ignored packages for updates in AUR. Pakku will be able to warn
+	about ignored package upgrade.
+
+*PrintAurNotFound*::
+	Print warnings during upgrade operation when foreign packages were not
+	found in AUR.
+
+*ViewNoDefault*::
+	When building from AUR, pakku will ask whether you want to view the
+	content of PKGBUILD and other files. Pressing enter key will give the
+	positive answer unless this option is specified.
+
+See Also
+--------
+linkman:pacman.conf[5], linkman:pakku[8]

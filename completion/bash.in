@@ -1,0 +1,61 @@
+make_import _arch_compgen
+
+make_import _arch_ptr2comp
+
+make_import _arch_incomp
+
+make_import _pacman_pkg
+
+make_import _pacman_file
+
+_pakku() {
+  local common core cur database files prev query remove sync upgrade o
+  COMPREPLY=()
+  _get_comp_words_by_ref cur prev
+  database=('asdeps asexplicit')
+  files=('list machinereadable owns search refresh regex' 'l o s x y')
+  query=('changelog check deps explicit file foreign groups info list owns
+          search unrequired upgrades' 'c e g i k l m o p s t u')
+  remove=('cascade dbonly nodeps assume-installed nosave print recursive unneeded' 'c n p s u')
+  sync=('asdeps asexplicit clean dbonly downloadonly force groups ignore ignoregroup
+         info list needed nodeps assume-installed print refresh recursive search sysupgrade
+         noaur build'
+        'c g i l p s u w y')
+  upgrade=('asdeps asexplicit force needed nodeps assume-installed print recursive' 'p')
+  common=('arch cachedir color config confirm dbpath debug gpgdir help hookdir logfile
+           noconfirm noprogressbar noscriptlet quiet root verbose' 'b d h q r v')
+  core=('database files help query remove sync upgrade version' 'D F Q R S U V h')
+
+  for o in 'D database' 'F files' 'Q query' 'R remove' 'S sync' 'U upgrade'; do
+    _arch_incomp "$o" && break
+  done
+
+  if [[ $? != 0 ]]; then
+    _arch_ptr2comp core
+  elif [[ ! $prev =~ ^-\w*[Vbhr] &&
+    ! $prev = --@(cachedir|color|config|dbpath|help|hookdir|gpgdir|logfile|root|version) ]]
+  then
+    [[ $cur = -* ]] && _arch_ptr2comp ${o#* } common ||
+      case ${o% *} in
+      D|R)
+          _pacman_pkg Qq;;
+      F)
+          _arch_incomp 'l list'   && _pacman_pkg Slq;
+          ;;
+      Q)
+        { _arch_incomp 'g groups' && _pacman_pkg Qg sort; }    ||
+        { _arch_incomp 'p file'   && _pacman_file; }           ||
+          _arch_incomp 'o owns'   || _arch_incomp 'u upgrades' ||
+          _pacman_pkg Qq;;
+      S)
+        { _arch_incomp 'g groups' && _pacman_pkg Sg; }      ||
+        { _arch_incomp 'l list'   && _pacman_pkg Sl sort; } ||
+          _arch_compgen "`pakku -Ssq "$cur" 2> /dev/null`";;
+      U)
+          _pacman_file;;
+      esac
+  fi
+  true
+}
+
+complete -F _pakku -o default pakku
