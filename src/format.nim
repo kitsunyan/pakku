@@ -283,11 +283,9 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
         ' '.repeat(infoLen - prefix.runeLen - title.runeLen - 1 - timeLeft.len),
         ' ', timeLeft, indicator, paddedProgressStr, "\x1b[0K\r")
       stdout.flushFile()
-      discard
 
     proc terminate() {.closure.} =
       echo()
-      discard
 
     update(" ", 0)
 
