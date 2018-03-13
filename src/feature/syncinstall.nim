@@ -67,6 +67,17 @@ proc orderInstallation(pkgInfos: seq[PackageInfo],
 proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
   printMode: bool, noaur: bool): (Table[PackageReference, SatisfyResult], seq[PackageReference]) =
+  proc checkDependencyCycle(pkgInfo: PackageInfo, reference: PackageReference): bool =
+    for checkReference in pkgInfo.allDepends:
+      if checkReference.arch.isNone or checkReference.arch == some(config.arch):
+        if checkReference.reference == reference:
+          return false
+        let buildPkgInfo = satisfied.opt(checkReference.reference)
+          .map(r => r.buildPkgInfo).flatten
+        if buildPkgInfo.isSome and not checkDependencyCycle(buildPkgInfo.unsafeGet, reference):
+          return false
+    return true
+
   proc findInSatisfied(reference: PackageReference): Option[PackageInfo] =
     for satref, res in satisfied.pairs:
       if res.buildPkgInfo.isSome:
@@ -76,7 +87,8 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
           return some(pkgInfo)
         for provides in pkgInfo.provides:
           if provides.arch.isNone or provides.arch == some(config.arch):
-            if reference.isProvidedBy(provides.reference):
+            if reference.isProvidedBy(provides.reference) and
+              checkDependencyCycle(pkgInfo, reference):
               return some(pkgInfo)
     return none(PackageInfo)
 
