@@ -193,6 +193,7 @@ proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
   proc collectArch(keyName: string, arch: Option[string]): seq[ArchPackageReference] =
     collect(arch.map(a => keyName & "_" & a).get(keyName))
       .map(splitConstraint)
+      .filter(c => c.name.len > 0)
       .map(c => (arch, (c.name, c.description, c.constraint)))
 
   proc collectArchs(keyName: string, archs: seq[string]): seq[ArchPackageReference] =
