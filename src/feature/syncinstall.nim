@@ -35,7 +35,7 @@ proc orderInstallation(ordered: seq[seq[seq[PackageInfo]]], grouped: seq[seq[Pac
   proc hasBuildDependency(pkgInfos: seq[PackageInfo]): bool =
     for pkgInfo in pkgInfos:
       for reference in pkgInfo.allDepends:
-        let satres = dependencies[reference.reference]
+        let satres = dependencies[reference]
         if satres.buildPkgInfo.isSome and
           not (satres.buildPkgInfo.unsafeGet in pkgInfos) and
           not (satres.buildPkgInfo.unsafeGet.name in orderedNamesSet):
@@ -70,13 +70,12 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
   (Table[PackageReference, SatisfyResult], seq[PackageReference]) =
   proc checkDependencyCycle(pkgInfo: PackageInfo, reference: PackageReference): bool =
     for checkReference in pkgInfo.allDepends:
-      if checkReference.arch.isNone or checkReference.arch == some(config.arch):
-        if checkReference.reference == reference:
-          return false
-        let buildPkgInfo = satisfied.opt(checkReference.reference)
-          .map(r => r.buildPkgInfo).flatten
-        if buildPkgInfo.isSome and not checkDependencyCycle(buildPkgInfo.unsafeGet, reference):
-          return false
+      if checkReference == reference:
+        return false
+      let buildPkgInfo = satisfied.opt(checkReference)
+        .map(r => r.buildPkgInfo).flatten
+      if buildPkgInfo.isSome and not checkDependencyCycle(buildPkgInfo.unsafeGet, reference):
+        return false
     return true
 
   proc findInSatisfied(reference: PackageReference): Option[PackageInfo] =
@@ -87,10 +86,9 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
           some((ConstraintOperation.eq, pkgInfo.version)))):
           return some(pkgInfo)
         for provides in pkgInfo.provides:
-          if provides.arch.isNone or provides.arch == some(config.arch):
-            if reference.isProvidedBy(provides.reference) and
-              checkDependencyCycle(pkgInfo, reference):
-              return some(pkgInfo)
+          if reference.isProvidedBy(provides) and
+            checkDependencyCycle(pkgInfo, reference):
+            return some(pkgInfo)
     return none(PackageInfo)
 
   proc findInDatabaseWithGroups(db: ptr AlpmDatabase, reference: PackageReference,
@@ -157,7 +155,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
       try:
         withAur():
           let (pkgInfos, aerrors) = getAurPackageInfo(aurCheck.map(r => r.name),
-            none(seq[RpcPackageInfo]), update)
+            none(seq[RpcPackageInfo]), config.arch, update)
           for e in aerrors: printError(config.color, e)
 
           let acceptedPkgInfos = pkgInfos.filter(i => not config.ignored(i.name, i.groups))
@@ -180,9 +178,8 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     success.map(r => (r.reference, r.result.unsafeGet)) &
     aurSuccess.map(r => (r.reference, r.result.unsafeGet))).toTable
 
-  let newUnsatisfied = lc[x.reference | (y <- aurSuccess,
-    r <- y.result, i <- r.buildPkgInfo, x <- i.allDepends,
-    x.arch.isNone or x.arch == some(config.arch)), PackageReference].deduplicate
+  let newUnsatisfied = lc[x | (y <- aurSuccess, r <- y.result, i <- r.buildPkgInfo,
+    x <- i.allDepends), PackageReference].deduplicate
 
   let newTotalAurFail = (totalAurFail & aurFail).deduplicate
   let newTotalUnsatisfied = (newUnsatisfied & newTotalAurFail).deduplicate
@@ -199,8 +196,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
   (Table[PackageReference, SatisfyResult], seq[PackageReference]) =
   let satisfied = pkgInfos.map(p => ((p.name, none(string), none(VersionConstraint)),
     (false, p.name, some(p)))).toTable
-  let unsatisfied = lc[x.reference | (i <- pkgInfos, x <- i.allDepends,
-    x.arch.isNone or x.arch == some(config.arch)), PackageReference].deduplicate
+  let unsatisfied = lc[x | (i <- pkgInfos, x <- i.allDepends), PackageReference].deduplicate
   findDependencies(config, handle, dbs, satisfied, unsatisfied, @[], printMode, noaur)
 
 proc filterNotFoundSyncTargets[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
@@ -231,11 +227,10 @@ proc printUnsatisfied(config: Config,
     for _, satres in satisfied.pairs:
       for pkgInfo in satres.buildPkgInfo:
         for reference in pkgInfo.allDepends:
-          let pref = reference.reference
-          if pref in unsatisfied:
+          if reference in unsatisfied:
             printError(config.color,
               trp("unable to satisfy dependency '%s' required by %s\n") %
-              [$pref, pkgInfo.name])
+              [$reference, pkgInfo.name])
 
 proc editLoop(config: Config, base: string, repoPath: string, gitPath: Option[string],
   defaultYes: bool, noconfirm: bool): char =
@@ -739,8 +734,8 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
 
       if fullRpcInfos.len > 0 and printFormat.isNone:
         echo(tr"downloading full package descriptions...")
-      let (aurPkgInfos, faerrors) = getAurPackageInfo(fullRpcInfos
-        .map(i => i.name), some(fullRpcInfos), proc (a: int, b: int) = discard)
+      let (aurPkgInfos, faerrors) = getAurPackageInfo(fullRpcInfos.map(i => i.name),
+        some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)
 
       if faerrors.len > 0:
         for e in faerrors: printError(config.color, e)

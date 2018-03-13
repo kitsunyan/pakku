@@ -21,11 +21,6 @@ type
     constraint: Option[VersionConstraint]
   ]
 
-  ArchPackageReference* = tuple[
-    arch: Option[string],
-    reference: PackageReference
-  ]
-
   RpcPackageInfo* = object of RootObj
     repo*: string
     base*: string
@@ -43,13 +38,13 @@ type
     url*: Option[string]
     licenses*: seq[string]
     groups*: seq[string]
-    depends*: seq[ArchPackageReference]
-    makeDepends*: seq[ArchPackageReference]
-    checkDepends*: seq[ArchPackageReference]
-    optional*: seq[ArchPackageReference]
-    provides*: seq[ArchPackageReference]
-    conflicts*: seq[ArchPackageReference]
-    replaces*: seq[ArchPackageReference]
+    depends*: seq[PackageReference]
+    makeDepends*: seq[PackageReference]
+    checkDepends*: seq[PackageReference]
+    optional*: seq[PackageReference]
+    provides*: seq[PackageReference]
+    conflicts*: seq[PackageReference]
+    replaces*: seq[PackageReference]
     gitUrl*: string
     gitBranch*: Option[string]
     gitCommit*: Option[string]
@@ -129,7 +124,7 @@ template repoPath*(tmpRoot: string, base: string): string =
 template buildPath*(repoPath: string, gitPath: Option[string]): string =
   gitPath.map(p => repoPath & "/" & p).get(repoPath)
 
-template allDepends*(pkgInfo: PackageInfo): seq[ArchPackageReference] =
+template allDepends*(pkgInfo: PackageInfo): seq[PackageReference] =
   pkgInfo.depends & pkgInfo.makeDepends & pkgInfo.checkDepends
 
 proc parseSrcInfoKeys(srcInfo: string):
@@ -163,7 +158,7 @@ proc parseSrcInfoKeys(srcInfo: string):
   (baseSeq: baseSeq, table: table)
 
 proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
-  baseSeq: ref seq[SrcInfoPair], nameSeq: ref seq[SrcInfoPair],
+  baseSeq: ref seq[SrcInfoPair], nameSeq: ref seq[SrcInfoPair], arch: string,
   gitUrl: string, gitBranch: Option[string], gitCommit: Option[string],
   gitPath: Option[string]): Option[PackageInfo] =
   let pairs = baseSeq[] & nameSeq[]
@@ -190,15 +185,10 @@ proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
     else:
       (workName, description, none(VersionConstraint))
 
-  proc collectArch(keyName: string, arch: Option[string]): seq[ArchPackageReference] =
-    collect(arch.map(a => keyName & "_" & a).get(keyName))
+  proc collectArch(keyName: string): seq[PackageReference] =
+    (collect(keyName) & collect(keyName & "_" & arch))
       .map(splitConstraint)
       .filter(c => c.name.len > 0)
-      .map(c => (arch, (c.name, c.description, c.constraint)))
-
-  proc collectArchs(keyName: string, archs: seq[string]): seq[ArchPackageReference] =
-    let archsFull = none(string) & archs.map(some)
-    lc[x | (a <- archsFull, x <- collectArch(keyName, a)), ArchPackageReference]
 
   let base = lc[x.value | (x <- baseSeq[], x.key == "pkgbase"), string].optLast
 
@@ -214,19 +204,19 @@ proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
   let licenses = collect("license")
   let groups = collect("groups")
 
-  let depends = collectArchs("depends", archs)
-  let makeDepends = collectArchs("makedepends", archs)
-  let checkDepends = collectArchs("checkdepends", archs)
-  let optional = collectArchs("optdepends", archs)
-  let provides = collectArchs("provides", archs)
-  let conflicts = collectArchs("conflicts", archs)
-  let replaces = collectArchs("replaces", archs)
+  let depends = collectArch("depends")
+  let makeDepends = collectArch("makedepends")
+  let checkDepends = collectArch("checkdepends")
+  let optional = collectArch("optdepends")
+  let provides = collectArch("provides")
+  let conflicts = collectArch("conflicts")
+  let replaces = collectArch("replaces")
 
   let info = rpcInfos.filter(i => i.name == name).optLast
 
   lc[PackageInfo(repo: repo, base: b, name: name, version: v, description: description,
     archs: archs, url: url, licenses: licenses, groups: groups,
-    depends: depends, makeDepends: makeDepends, checkdepends: checkDepends,
+    depends: depends, makeDepends: makeDepends, checkDepends: checkDepends,
     optional: optional, provides: provides, conflicts: conflicts, replaces: replaces,
     maintainer: info.map(i => i.maintainer).flatten,
     firstSubmitted: info.map( i => i.firstSubmitted).flatten,
@@ -236,13 +226,13 @@ proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
     gitUrl: gitUrl, gitBranch: gitBranch, gitCommit: gitCommit, gitPath: gitPath) |
     (b <- base, v <- versionFull), PackageInfo].optLast
 
-proc parseSrcInfo*(repo: string, srcInfo: string,
+proc parseSrcInfo*(repo: string, srcInfo: string, arch: string,
   gitUrl: string, gitBranch: Option[string], gitCommit: Option[string],
   gitPath: Option[string], rpcInfos: seq[RpcPackageInfo] = @[]): seq[PackageInfo] =
   let parsed = parseSrcInfoKeys(srcInfo)
   let packageSeq = toSeq(parsed.table.namedPairs)
   lc[x | (pair <- packageSeq, x <- parseSrcInfoName(repo, pair.key, rpcInfos,
-    parsed.baseSeq, pair.value, gitUrl, gitBranch, gitCommit, gitPath)), PackageInfo]
+    parsed.baseSeq, pair.value, arch, gitUrl, gitBranch, gitCommit, gitPath)), PackageInfo]
 
 proc `$`*(reference: PackageReference): string =
   reference.constraint

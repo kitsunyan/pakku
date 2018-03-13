@@ -331,7 +331,8 @@ proc obtainBuildPkgInfos*(config: Config,
               let output = execProcess(bashCmd, ["-c",
                 """cd "$2/$3" && "$1" --printsrcinfo""",
                 "bash", makePkgCmd, repoPath, git.path], options = {})
-              parseSrcInfo(repo, output, git.url, some(git.branch), commit, some(git.path))
+              parseSrcInfo(repo, output, config.arch,
+                git.url, some(git.branch), commit, some(git.path))
                 .filter(i => i.version == version)
           else:
             @[]

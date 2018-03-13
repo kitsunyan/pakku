@@ -37,15 +37,11 @@ const
   ]
 
 proc formatDeps(title: string, config: Config,
-  refs: seq[ArchPackageReference]): PackageLineFormat =
-  proc formatDep(reference: ArchPackageReference): (string, bool) =
-    reference.reference.description
-      .map(d => ($reference.reference & ": " & d, true))
-      .get(($reference.reference, false))
-
+  refs: seq[PackageReference]): PackageLineFormat =
   let values: seq[tuple[title: string, hasDesc: bool]] = refs
-    .filter(r => r.arch.isNone or r.arch == some(config.arch))
-    .map(formatDep)
+    .map(r => r.description
+      .map(d => ($r & ": " & d, true))
+      .get(($r, false)))
 
   if values.len > 0:
     (title, values.map(v => v.title), values.map(v => v.hasDesc).foldl(a or b))
@@ -110,7 +106,7 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
     findSyncTargets(handle, dbs, targets, false, false)
 
   let (pkgInfos, aerrors) = getAurPackageInfo(checkAur, none(seq[RpcPackageInfo]),
-    proc (a: int, b: int) = discard)
+    config.arch, proc (a: int, b: int) = discard)
   for e in aerrors: printError(config.color, e)
 
   let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos)

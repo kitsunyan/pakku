@@ -74,7 +74,7 @@ proc getRpcPackageInfo*(pkgs: seq[string]): (seq[RpcPackageInfo], Option[string]
         (@[], some(tr"failed to parse server response"))
 
 proc getAurPackageInfo*(pkgs: seq[string], rpcInfosOption: Option[seq[RpcPackageInfo]],
-  progressCallback: (int, int) -> void): (seq[PackageInfo], seq[string]) =
+  arch: string, progressCallback: (int, int) -> void): (seq[PackageInfo], seq[string]) =
   if pkgs.len == 0:
     (@[], @[])
   else:
@@ -105,7 +105,7 @@ proc getAurPackageInfo*(pkgs: seq[string], rpcInfosOption: Option[seq[RpcPackage
           if operror.isSome:
             (@[], operror)
           else:
-            let pkgInfos = parseSrcInfo("aur", srcInfo,
+            let pkgInfos = parseSrcInfo("aur", srcInfo, arch,
               aurUrl & base & ".git", none(string), none(string), none(string), rpcInfos)
             (pkgInfos, none(string))
 
