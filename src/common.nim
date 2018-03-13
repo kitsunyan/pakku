@@ -37,38 +37,6 @@ proc toPackageReference*(dependency: ptr AlpmDependency): PackageReference =
   let description = if dependency.desc != nil: some($dependency.desc) else: none(string)
   ($dependency.name, description, op.map(o => (o, $dependency.version)))
 
-proc checkConstraints(lop: ConstraintOperation, rop: ConstraintOperation, cmp: int): bool =
-  let (x1, x2) = if cmp > 0:
-      (1, -1)
-    elif cmp < 0:
-      (-1, 1)
-    else:
-      (0, 0)
-
-  proc c(op: ConstraintOperation, x1: int, x2: int): bool =
-    case op:
-      of ConstraintOperation.eq: x1 == x2
-      of ConstraintOperation.ge: x1 >= x2
-      of ConstraintOperation.le: x1 <= x2
-      of ConstraintOperation.gt: x1 > x2
-      of ConstraintOperation.lt: x1 < x2
-
-  template a(x: int): bool = lop.c(x, x1) and rop.c(x, x2)
-
-  a(2) or a(1) or a(0) or a(-1) or a(-2)
-
-proc isProvidedBy*(package: PackageReference, by: PackageReference): bool =
-  if package.name == by.name:
-    if package.constraint.isNone or by.constraint.isNone:
-      true
-    else:
-      let lcon = package.constraint.unsafeGet
-      let rcon = package.constraint.unsafeGet
-      let cmp = vercmp(lcon.version, rcon.version)
-      checkConstraints(lcon.operation, rcon.operation, cmp)
-  else:
-    false
-
 proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: seq[Argument]] =
   let refreshCount = args.count((some("y"), "refresh"))
   if refreshCount > 0:

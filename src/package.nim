@@ -1,6 +1,7 @@
 import
   future, options, os, re, sequtils, sets, strutils, tables,
-  utils
+  utils,
+  "wrapper/alpm"
 
 type
   ConstraintOperation* {.pure.} = enum
@@ -127,6 +128,38 @@ template buildPath*(repoPath: string, gitPath: Option[string]): string =
 template allDepends*(pkgInfo: PackageInfo): seq[PackageReference] =
   pkgInfo.depends & pkgInfo.makeDepends & pkgInfo.checkDepends
 
+proc checkConstraints(lop: ConstraintOperation, rop: ConstraintOperation, cmp: int): bool =
+  let (x1, x2) = if cmp > 0:
+      (1, -1)
+    elif cmp < 0:
+      (-1, 1)
+    else:
+      (0, 0)
+
+  proc c(op: ConstraintOperation, x1: int, x2: int): bool =
+    case op:
+      of ConstraintOperation.eq: x1 == x2
+      of ConstraintOperation.ge: x1 >= x2
+      of ConstraintOperation.le: x1 <= x2
+      of ConstraintOperation.gt: x1 > x2
+      of ConstraintOperation.lt: x1 < x2
+
+  template a(x: int): bool = lop.c(x, x1) and rop.c(x, x2)
+
+  a(2) or a(1) or a(0) or a(-1) or a(-2)
+
+proc isProvidedBy*(package: PackageReference, by: PackageReference): bool =
+  if package.name == by.name:
+    if package.constraint.isNone or by.constraint.isNone:
+      true
+    else:
+      let lcon = package.constraint.unsafeGet
+      let rcon = package.constraint.unsafeGet
+      let cmp = vercmp(lcon.version, rcon.version)
+      checkConstraints(lcon.operation, rcon.operation, cmp)
+  else:
+    false
+
 proc parseSrcInfoKeys(srcInfo: string):
   tuple[baseSeq: ref seq[SrcInfoPair], table: Table[string, ref seq[SrcInfoPair]]] =
   var table = initTable[string, ref seq[SrcInfoPair]]()
@@ -190,6 +223,10 @@ proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
       .map(splitConstraint)
       .filter(c => c.name.len > 0)
 
+  proc filterReferences(references: seq[PackageReference],
+    filterWith: seq[PackageReference]): seq[PackageReference] =
+    references.filter(r => filterWith.filter(w => r.isProvidedBy(w)).len == 0)
+
   let base = lc[x.value | (x <- baseSeq[], x.key == "pkgbase"), string].optLast
 
   let version = collect("pkgver").optLast
@@ -205,8 +242,8 @@ proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
   let groups = collect("groups")
 
   let depends = collectArch("depends")
-  let makeDepends = collectArch("makedepends")
-  let checkDepends = collectArch("checkdepends")
+  let makeDepends = collectArch("makedepends").filterReferences(depends)
+  let checkDepends = collectArch("checkdepends").filterReferences(depends & makeDepends)
   let optional = collectArch("optdepends")
   let provides = collectArch("provides")
   let conflicts = collectArch("conflicts")
