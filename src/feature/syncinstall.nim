@@ -66,7 +66,8 @@ proc orderInstallation(pkgInfos: seq[PackageInfo],
 
 proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
-  printMode: bool, noaur: bool): (Table[PackageReference, SatisfyResult], seq[PackageReference]) =
+  totalAurFail: seq[PackageReference], printMode: bool, noaur: bool):
+  (Table[PackageReference, SatisfyResult], seq[PackageReference]) =
   proc checkDependencyCycle(pkgInfo: PackageInfo, reference: PackageReference): bool =
     for checkReference in pkgInfo.allDepends:
       if checkReference.arch.isNone or checkReference.arch == some(config.arch):
@@ -146,6 +147,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
   let findResult: seq[ReferenceResult] = unsatisfied.map(r => (r, r.find))
   let success = findResult.filter(r => r.result.isSome)
   let aurCheck = findResult.filter(r => r.result.isNone).map(r => r.reference)
+    .filter(r => not (r in totalAurFail))
 
   let (aurSuccess, aurFail) = if not noaur and aurCheck.len > 0: (block:
       let (update, terminate) = if aurCheck.len >= 4:
@@ -182,12 +184,15 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     r <- y.result, i <- r.buildPkgInfo, x <- i.allDepends,
     x.arch.isNone or x.arch == some(config.arch)), PackageReference].deduplicate
 
-  if aurFail.len > 0:
-    (newSatisfied, aurFail)
-  elif newUnsatisfied.len > 0:
-    findDependencies(config, handle, dbs, newSatisfied, newUnsatisfied, printMode, noaur)
+  let newTotalAurFail = (totalAurFail & aurFail).deduplicate
+  let newTotalUnsatisfied = (newUnsatisfied & newTotalAurFail).deduplicate
+
+  if newUnsatisfied.len > 0:
+    findDependencies(config, handle, dbs, newSatisfied, newTotalUnsatisfied, newTotalAurFail,
+      printMode, noaur)
   else:
-    (newSatisfied, @[])
+    let finallyUnsatisfied = newTotalAurFail.filter(r => not newSatisfied.hasKey(r))
+    (newSatisfied, finallyUnsatisfied)
 
 proc findDependencies(config: Config, handle: ptr AlpmHandle,
   dbs: seq[ptr AlpmDatabase], pkgInfos: seq[PackageInfo], printMode: bool, noaur: bool):
@@ -196,7 +201,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
     (false, p.name, some(p)))).toTable
   let unsatisfied = lc[x.reference | (i <- pkgInfos, x <- i.allDepends,
     x.arch.isNone or x.arch == some(config.arch)), PackageReference].deduplicate
-  findDependencies(config, handle, dbs, satisfied, unsatisfied, printMode, noaur)
+  findDependencies(config, handle, dbs, satisfied, unsatisfied, @[], printMode, noaur)
 
 proc filterNotFoundSyncTargets[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
   pkgInfos: seq[T]): (Table[string, T], seq[SyncPackageTarget]) =
