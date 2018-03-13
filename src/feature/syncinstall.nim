@@ -520,7 +520,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
 
                 let aur = pkgInfos[0].repo == "aur"
 
-                if not skipEdit and aur and config.aurComments:
+                if not skipEdit and aur and not noconfirm and config.aurComments:
                   echo(tr"downloading comments from AUR...")
                   let (comments, error) = downloadAurComments(base)
                   for e in error: printError(config.color, e)
