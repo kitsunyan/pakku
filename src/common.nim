@@ -376,16 +376,8 @@ proc cloneRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[st
         let code = forkWait(() => execResult(gitCmd, "-C", repoPath,
           "reset", "-q", "--hard", gitCommit.unsafeGet))
         (code, none(string))
-      elif aur: (block:
-        let commit = bisectVersion(repoPath, config.debug, none(string),
-          "srcinfo", basePackages[0].gitPath.get("."), basePackages[0].version)
-
-        if commit.isSome:
-          let code = forkWait(() => execResult(gitCmd, "-C", repoPath,
-            "reset", "-q", "--hard", commit.unsafeGet))
-          (code, none(string))
-        else:
-          (1, none(string)))
+      elif aur:
+        (0, none(string))
       else:
         (1, none(string))
     else:
