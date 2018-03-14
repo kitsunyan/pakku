@@ -71,7 +71,7 @@ ASCIIDOC_OPTIONS = \
 	-a mansource='Pakku' \
 	-a manversion="${RVERSION}"
 
-.PHONY: all clean install distcheck
+.PHONY: all clean install uninstall distcheck
 
 all: \
 	${TARGETS} \
