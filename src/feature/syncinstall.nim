@@ -289,58 +289,83 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
   let gitPath = pkgInfos[0].gitPath
   let buildPath = buildPath(repoPath, gitPath)
 
-  let buildCode = forkWait(proc: int =
-    if chdir(buildPath) == 0:
-      discard setenv("PKGDEST", config.tmpRoot, 1)
-      discard setenv("CARCH", config.arch, 1)
-
-      if not noextract:
-        removeDirQuiet(buildPath & "src")
-
-      let optional: seq[tuple[arg: string, cond: bool]] = @[
-        ("-e", noextract),
-        ("-m", not config.color)
-      ]
-
-      execResult(@[makepkgCmd, "-f"] &
-        optional.filter(o => o.cond).map(o => o.arg))
+  let confFileEnv = getenv("MAKEPKG_CONF")
+  let confFile = if confFileEnv == nil or confFileEnv.len == 0:
+      sysConfDir & "/makepkg.conf"
     else:
-      quit(1))
+      $confFileEnv
 
-  if buildCode != 0:
-    printError(config.color, tr"failed to build '$#'" % [base])
-    (none(BuildResult), buildCode)
+  let workConfFile = config.tmpRoot & "/makepkg.conf"
+
+  let workConfFileCopySuccess = try:
+    copyFile(confFile, workConfFile)
+    var file: File
+    if file.open(workConfFile, fmAppend):
+      try:
+        file.writeLine("")
+        file.writeLine('#'.repeat(73))
+        file.writeLine("# PAKKU OVERRIDES")
+        file.writeLine('#'.repeat(73))
+        file.writeLine("CARCH=" & config.arch.bashEscape)
+        file.writeLine("PKGDEST=" & config.tmpRoot.bashEscape)
+      finally:
+        file.close()
+    true
+  except:
+    discard unlink(workConfFile)
+    false
+
+  if not workConfFileCopySuccess:
+    printError(config.color, tr"failed to copy config file '$#'" % [confFile])
+    (none(BuildResult), 1)
   else:
-    let confFileEnv = getenv("MAKEPKG_CONF")
-    let confFile = if confFileEnv == nil or confFileEnv.len == 0:
-        sysConfDir & "/makepkg.conf"
-      else:
-        $confFileEnv
-
     let envExt = getenv("PKGEXT")
     let confExt = if envExt == nil or envExt.len == 0:
         runProgram(bashCmd, "-c",
           "source \"$@\" && echo \"$PKGEXT\"",
-          "bash", confFile).optFirst.get("")
+          "bash", workConfFile).optFirst.get("")
       else:
         $envExt
 
-    let extracted = runProgram(bashCmd, "-c",
-      """source "$@" && echo "$epoch" && echo "$pkgver" && """ &
-      """echo "$pkgrel" && echo "${arch[@]}" && echo "${pkgname[@]}"""",
-      "bash", buildPath & "/PKGBUILD")
-    if extracted.len != 5:
-      printError(config.color, tr"failed to extract package info '$#'" % [base])
-      (none(BuildResult), 1)
-    else:
-      let epoch = extracted[0]
-      let versionShort = extracted[1] & "-" & extracted[2]
-      let version = if epoch.len > 0: epoch & ":" & versionShort else: versionShort
-      let archs = extracted[3].split(" ").toSet
-      let arch = if config.arch in archs: config.arch else: "any"
-      let names = extracted[4].split(" ")
+    let buildCode = forkWait(proc: int =
+      if chdir(buildPath) == 0:
+        discard setenv("MAKEPKG_CONF", "", 1)
 
-      (some((version, arch, $confExt, names)), 0)
+        if not noextract:
+          removeDirQuiet(buildPath & "src")
+
+        let optional: seq[tuple[arg: string, cond: bool]] = @[
+          ("-e", noextract),
+          ("-m", not config.color)
+        ]
+
+        execResult(@[makepkgCmd, "--config", workConfFile, "-f"] &
+          optional.filter(o => o.cond).map(o => o.arg))
+      else:
+        quit(1))
+
+    discard unlink(workConfFile)
+
+    if buildCode != 0:
+      printError(config.color, tr"failed to build '$#'" % [base])
+      (none(BuildResult), buildCode)
+    else:
+      let extracted = runProgram(bashCmd, "-c",
+        """source "$@" && echo "$epoch" && echo "$pkgver" && """ &
+        """echo "$pkgrel" && echo "${arch[@]}" && echo "${pkgname[@]}"""",
+        "bash", buildPath & "/PKGBUILD")
+      if extracted.len != 5:
+        printError(config.color, tr"failed to extract package info '$#'" % [base])
+        (none(BuildResult), 1)
+      else:
+        let epoch = extracted[0]
+        let versionShort = extracted[1] & "-" & extracted[2]
+        let version = if epoch.len > 0: epoch & ":" & versionShort else: versionShort
+        let archs = extracted[3].split(" ").toSet
+        let arch = if config.arch in archs: config.arch else: "any"
+        let names = extracted[4].split(" ")
+
+        (some((version, arch, $confExt, names)), 0)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =

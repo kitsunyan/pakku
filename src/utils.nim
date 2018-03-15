@@ -179,6 +179,20 @@ proc removeDirQuiet*(s: string) =
   except:
     discard
 
+const bashSpecialCharacters = " \t\"'`()[]{}#&|;!\\*~<>?"
+
+proc bashEscape*(s: string): string =
+  result = ""
+  for c in s:
+    if c in bashSpecialCharacters:
+      result &= "\\" & c
+    elif c == "\n"[0]:
+      result &= "$'\\n'"
+    elif c.cuint < 0x20.cuint or c.cuint > 0x80.cuint:
+      result &= "$'\\0x" & c.toHex & "'"
+    else:
+      result &= c
+
 proc dgettext(domain: cstring, s: cstring): cstring
   {.cdecl, importc: "dgettext".}
 
