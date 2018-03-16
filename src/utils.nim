@@ -67,9 +67,13 @@ iterator enumerate*[T: enum]: T =
   for i in elow .. ehigh:
     yield T(i)
 
-iterator namedPairs*[K, V](table: Table[K, V]): tuple[key: K, value: V] =
-  for key, value in table.pairs:
-    yield (key, value)
+template namedPairsTyped(T: typedesc) =
+  iterator namedPairs*[K, V](table: T[K, V]): tuple[key: K, value: V] =
+    for key, value in table.pairs:
+      yield (key, value)
+
+namedPairsTyped(Table)
+namedPairsTyped(OrderedTable)
 
 iterator reversed*[T](s: openArray[T]): T =
     for i in countdown(s.len - 1, 0):

@@ -35,6 +35,8 @@ type
     popularity*: float
 
   PackageInfo* = object of RpcPackageInfo
+    baseIndex*: int
+    baseCount*: int
     archs*: seq[string]
     url*: Option[string]
     licenses*: seq[string]
@@ -161,8 +163,8 @@ proc isProvidedBy*(package: PackageReference, by: PackageReference): bool =
     false
 
 proc parseSrcInfoKeys(srcInfo: string):
-  tuple[baseSeq: ref seq[SrcInfoPair], table: Table[string, ref seq[SrcInfoPair]]] =
-  var table = initTable[string, ref seq[SrcInfoPair]]()
+  tuple[baseSeq: ref seq[SrcInfoPair], table: OrderedTable[string, ref seq[SrcInfoPair]]] =
+  var table = initOrderedTable[string, ref seq[SrcInfoPair]]()
   var matches: array[2, string]
   var baseSeq: ref seq[SrcInfoPair]
   var values: ref seq[SrcInfoPair]
@@ -190,9 +192,9 @@ proc parseSrcInfoKeys(srcInfo: string):
 
   (baseSeq: baseSeq, table: table)
 
-proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
-  baseSeq: ref seq[SrcInfoPair], nameSeq: ref seq[SrcInfoPair], arch: string,
-  gitUrl: string, gitBranch: Option[string], gitCommit: Option[string],
+proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int,
+  rpcInfos: seq[RpcPackageInfo], baseSeq: ref seq[SrcInfoPair], nameSeq: ref seq[SrcInfoPair],
+  arch: string, gitUrl: string, gitBranch: Option[string], gitCommit: Option[string],
   gitPath: Option[string]): Option[PackageInfo] =
   let pairs = baseSeq[] & nameSeq[]
   proc collect(keyName: string): seq[string] =
@@ -251,7 +253,8 @@ proc parseSrcInfoName(repo: string, name: string, rpcInfos: seq[RpcPackageInfo],
 
   let info = rpcInfos.filter(i => i.name == name).optLast
 
-  lc[PackageInfo(repo: repo, base: b, name: name, version: v, description: description,
+  lc[PackageInfo(baseIndex: baseIndex, baseCount: baseCount,
+    repo: repo, base: b, name: name, version: v, description: description,
     archs: archs, url: url, licenses: licenses, groups: groups,
     depends: depends, makeDepends: makeDepends, checkDepends: checkDepends,
     optional: optional, provides: provides, conflicts: conflicts, replaces: replaces,
@@ -267,9 +270,10 @@ proc parseSrcInfo*(repo: string, srcInfo: string, arch: string,
   gitUrl: string, gitBranch: Option[string], gitCommit: Option[string],
   gitPath: Option[string], rpcInfos: seq[RpcPackageInfo] = @[]): seq[PackageInfo] =
   let parsed = parseSrcInfoKeys(srcInfo)
-  let packageSeq = toSeq(parsed.table.namedPairs)
-  lc[x | (pair <- packageSeq, x <- parseSrcInfoName(repo, pair.key, rpcInfos,
-    parsed.baseSeq, pair.value, arch, gitUrl, gitBranch, gitCommit, gitPath)), PackageInfo]
+
+  toSeq(parsed.table.namedPairs).foldl(a & toSeq(parseSrcInfoName(repo, b.key,
+    a.len, parsed.table.len, rpcInfos, parsed.baseSeq, b.value, arch,
+    gitUrl, gitBranch, gitCommit, gitPath).items), newSeq[PackageInfo]())
 
 proc `$`*(reference: PackageReference): string =
   reference.constraint

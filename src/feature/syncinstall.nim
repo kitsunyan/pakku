@@ -19,10 +19,8 @@ type
   ]
 
   BuildResult = tuple[
-    version: string,
-    arch: string,
     ext: string,
-    names: seq[string]
+    pkgInfos: Table[string, PackageInfo]
   ]
 
 proc groupsSeq(pkg: ptr AlpmPackage): seq[string] =
@@ -350,22 +348,34 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
       printError(config.color, tr"failed to build '$#'" % [base])
       (none(BuildResult), buildCode)
     else:
-      let extracted = runProgram(bashCmd, "-c",
-        """source "$@" && echo "$epoch" && echo "$pkgver" && """ &
-        """echo "$pkgrel" && echo "${arch[@]}" && echo "${pkgname[@]}"""",
-        "bash", buildPath & "/PKGBUILD")
-      if extracted.len != 5:
-        printError(config.color, tr"failed to extract package info '$#'" % [base])
+      let srcInfo = obtainSrcInfo(buildPath)
+      let resultPkgInfos = parseSrcInfo(pkgInfos[0].repo, srcInfo, config.arch,
+        pkgInfos[0].gitUrl, pkgInfos[0].gitBranch, pkgInfos[0].gitCommit, some(buildPath))
+
+      type ResultInfo = tuple[name: string, baseIndex: int, pkgInfo: Option[PackageInfo]]
+
+      let resultPkgInfosTable = resultPkgInfos.map(i => (i.name, i)).toTable
+      let resultByNames: seq[ResultInfo] = pkgInfos
+        .map(i => (i.name, i.baseIndex, resultPkgInfosTable.opt(i.name)))
+
+      let resultByIndices: seq[ResultInfo] = if pkgInfos[0].baseCount == resultPkgInfos.len:
+          resultByNames.map(res => (block:
+            if res.pkgInfo.isNone:
+              (res.name, res.baseIndex, some(resultPkgInfos[res.baseIndex]))
+            else:
+              res))
+        else:
+          resultByNames
+
+      let failedNames = lc[x.name | (x <- resultByIndices, x.pkgInfo.isNone), string]
+
+      if failedNames.len > 0:
+        for name in failedNames:
+          printError(config.color, tr"$#: failed to extract package info" % [name])
         (none(BuildResult), 1)
       else:
-        let epoch = extracted[0]
-        let versionShort = extracted[1] & "-" & extracted[2]
-        let version = if epoch.len > 0: epoch & ":" & versionShort else: versionShort
-        let archs = extracted[3].split(" ").toSet
-        let arch = if config.arch in archs: config.arch else: "any"
-        let names = extracted[4].split(" ")
-
-        (some((version, arch, $confExt, names)), 0)
+        let table = resultByIndices.map(i => (i.name, i.pkgInfo.get)).toTable
+        (some(($confExt, table)), 0)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =
@@ -429,11 +439,12 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 
   let (buildResults, buildCode) = buildNext(0, @[])
 
-  proc formatArchiveFile(br: BuildResult, name: string): string =
-    config.tmpRoot & "/" & name & "-" & br.version & "-" & br.arch & br.ext
+  proc formatArchiveFile(pkgInfo: PackageInfo, ext: string): string =
+    let arch = if config.arch in pkgInfo.archs: config.arch else: "any"
+    config.tmpRoot & "/" & pkgInfo.name & "-" & pkgInfo.version & "-" & arch & ext
 
-  let files = lc[(name, formatArchiveFile(br, name)) |
-    (br <- buildResults, name <- br.names), (string, string)].toTable
+  let files = lc[(p.key, formatArchiveFile(p.value, br.ext)) |
+    (br <- buildResults, p <- br.pkgInfos.namedPairs), (string, string)].toTable
   let install = lc[x | (g <- basePackages, i <- g, x <- files.opt(i.name)), string]
 
   proc handleTmpRoot(clear: bool) =

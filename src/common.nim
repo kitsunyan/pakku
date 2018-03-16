@@ -245,6 +245,10 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       else:
         none(string)
 
+proc obtainSrcInfo*(path: string): string =
+  execProcess(bashCmd, ["-c", """cd "$2" && "$1" --printsrcinfo""",
+    "bash", makePkgCmd, path], options = {})
+
 proc obtainBuildPkgInfos*(config: Config,
   pacmanTargets: seq[FullPackageTarget[RpcPackageInfo]]): (seq[PackageInfo], seq[string]) =
   type
@@ -296,10 +300,8 @@ proc obtainBuildPkgInfos*(config: Config,
             else:
               discard forkWait(() => execResult(gitCmd, "-C", repoPath,
                 "checkout", "-q", commit.unsafeGet))
-              let output = execProcess(bashCmd, ["-c",
-                """cd "$2/$3" && "$1" --printsrcinfo""",
-                "bash", makePkgCmd, repoPath, git.path], options = {})
-              parseSrcInfo(repo, output, config.arch,
+              let srcInfo = obtainSrcInfo(repoPath & "/" & git.path)
+              parseSrcInfo(repo, srcInfo, config.arch,
                 git.url, some(git.branch), commit, some(git.path))
                 .filter(i => i.version == version)
           else:
