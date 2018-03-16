@@ -158,6 +158,9 @@ proc runProgram*(args: varargs[string]): seq[string] =
 proc setenv*(name: cstring, value: cstring, override: cint): cint
   {.importc, header: "<stdlib.h>".}
 
+proc unsetenv*(name: cstring): cint
+  {.importc, header: "<stdlib.h>".}
+
 proc getUser*: (int, string) =
   let uid = getuid()
   while true:

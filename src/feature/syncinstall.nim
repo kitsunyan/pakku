@@ -327,7 +327,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
 
     let buildCode = forkWait(proc: int =
       if chdir(buildPath) == 0:
-        discard setenv("MAKEPKG_CONF", "", 1)
+        discard unsetenv("MAKEPKG_CONF")
 
         if not noextract:
           removeDirQuiet(buildPath & "src")
