@@ -80,8 +80,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     for satref, res in satisfied.pairs:
       if res.buildPkgInfo.isSome:
         let pkgInfo = res.buildPkgInfo.unsafeGet
-        if satref == reference or reference.isProvidedBy((pkgInfo.name, none(string),
-          some((ConstraintOperation.eq, pkgInfo.version)))):
+        if satref == reference or reference.isProvidedBy(pkgInfo.toPackageReference):
           return some(pkgInfo)
         for provides in pkgInfo.provides:
           if reference.isProvidedBy(provides) and
@@ -92,8 +91,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
   proc findInDatabaseWithGroups(db: ptr AlpmDatabase, reference: PackageReference,
     directName: bool): Option[tuple[name: string, groups: seq[string]]] =
     for pkg in db.packages:
-      if reference.isProvidedBy(($pkg.name, none(string),
-        some((ConstraintOperation.eq, $pkg.version)))):
+      if reference.isProvidedBy(pkg.toPackageReference):
         return some(($pkg.name, pkg.groupsSeq))
       for provides in pkg.provides:
         if reference.isProvidedBy(provides.toPackageReference):
@@ -610,8 +608,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
 
             proc checkSatisfied(reference: PackageReference): bool =
               for pkg in handle.local.packages:
-                if reference.isProvidedBy(($pkg.name, none(string),
-                  some((ConstraintOperation.eq, $pkg.version)))):
+                if reference.isProvidedBy(pkg.toPackageReference):
                   return true
                 for provides in pkg.provides:
                   if reference.isProvidedBy(provides.toPackageReference):
@@ -823,11 +820,28 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
             else:
               true))
 
-          if acceptedPkgInfos.len > 0 and printFormat.isNone:
+          let nonConflicingPkgInfos = pkgInfos.foldl(block:
+            let conflictsWith = lc[p | (p <- a, p.name != b.name and
+              (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.toPackageReference)), int].len > 0 or
+                lc[0 | (c <- p.conflicts, c.isProvidedBy(b.toPackageReference)), int].len > 0)),
+              PackageInfo]
+            if printFormat.isNone and conflictsWith.len > 0:
+              for conflict in conflictsWith:
+                printWarning(config.color,
+                  tra("removing '%s' from target list because it conflicts with '%s'\n") %
+                  [b.name, conflict.name])
+              a
+            else:
+              a & b,
+            newSeq[PackageInfo]())
+
+          let finalPkgInfos = nonConflicingPkgInfos
+
+          if finalPkgInfos.len > 0 and printFormat.isNone:
             echo(trp("resolving dependencies...\n"))
           let (satisfied, unsatisfied) = withAlpm(config.root, config.db,
             config.dbs, config.arch, handle, dbs, errors):
-            findDependencies(config, handle, dbs, acceptedPkgInfos,
+            findDependencies(config, handle, dbs, finalPkgInfos,
               printFormat.isSome, noaur)
 
           if unsatisfied.len > 0:
@@ -848,8 +862,8 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
                 elif pkgInfo.repo == "aur" and pkgInfo.maintainer.isNone:
                   printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
 
-            let aurPrintSet = acceptedPkgInfos.map(i => i.name).toSet
-            let fullPkgInfos = acceptedPkgInfos & lc[i | (s <- satisfied.values,
+            let aurPrintSet = finalPkgInfos.map(i => i.name).toSet
+            let fullPkgInfos = finalPkgInfos & lc[i | (s <- satisfied.values,
               i <- s.buildPkgInfo, not (i.name in aurPrintSet)), PackageInfo].deduplicate
 
             let directPacmanTargets = pacmanTargets.map(t => t.formatArgument)

@@ -25,18 +25,6 @@ type
   FullPackageTarget*[T] = object of SyncPackageTarget
     pkgInfo*: Option[T]
 
-proc toPackageReference*(dependency: ptr AlpmDependency): PackageReference =
-  let op = case dependency.depmod:
-    of AlpmDepMod.eq: some(ConstraintOperation.eq)
-    of AlpmDepMod.ge: some(ConstraintOperation.ge)
-    of AlpmDepMod.le: some(ConstraintOperation.le)
-    of AlpmDepMod.gt: some(ConstraintOperation.gt)
-    of AlpmDepMod.lt: some(ConstraintOperation.lt)
-    else: none(ConstraintOperation)
-
-  let description = if dependency.desc != nil: some($dependency.desc) else: none(string)
-  ($dependency.name, description, op.map(o => (o, $dependency.version)))
-
 proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: seq[Argument]] =
   let refreshCount = args.count((some("y"), "refresh"))
   if refreshCount > 0:

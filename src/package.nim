@@ -162,6 +162,24 @@ proc isProvidedBy*(package: PackageReference, by: PackageReference): bool =
   else:
     false
 
+proc toPackageReference*(dependency: ptr AlpmDependency): PackageReference =
+  let op = case dependency.depmod:
+    of AlpmDepMod.eq: some(ConstraintOperation.eq)
+    of AlpmDepMod.ge: some(ConstraintOperation.ge)
+    of AlpmDepMod.le: some(ConstraintOperation.le)
+    of AlpmDepMod.gt: some(ConstraintOperation.gt)
+    of AlpmDepMod.lt: some(ConstraintOperation.lt)
+    else: none(ConstraintOperation)
+
+  let description = if dependency.desc != nil: some($dependency.desc) else: none(string)
+  ($dependency.name, description, op.map(o => (o, $dependency.version)))
+
+template toPackageReference*(pkg: ptr AlpmPackage): PackageReference =
+  ($pkg.name, none(string), some((ConstraintOperation.eq, $pkg.version)))
+
+template toPackageReference*(pkg: PackageInfo): PackageReference =
+  (pkg.name, none(string), some((ConstraintOperation.eq, pkg.version)))
+
 proc parseSrcInfoKeys(srcInfo: string):
   tuple[baseSeq: ref seq[SrcInfoPair], table: OrderedTable[string, ref seq[SrcInfoPair]]] =
   var table = initOrderedTable[string, ref seq[SrcInfoPair]]()

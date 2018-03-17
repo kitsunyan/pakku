@@ -1,6 +1,6 @@
 import
   algorithm, future, options, sequtils, sets, strutils, tables,
-  "../args", "../common", "../config", "../format", "../package", "../pacman", "../utils",
+  "../args", "../config", "../format", "../package", "../pacman", "../utils",
   "../wrapper/alpm"
 
 proc handleQueryOrphans*(args: seq[Argument], config: Config): int =
@@ -22,11 +22,11 @@ proc handleQueryOrphans*(args: seq[Argument], config: Config): int =
           reference
 
       let depends = toSeq(pkg.depends.items)
-        .map(toPackageReference).toSet
+        .map(d => d.toPackageReference).toSet
       let optional = toSeq(pkg.optional.items)
-        .map(toPackageReference).toSet
+        .map(d => d.toPackageReference).toSet
       let provides = toSeq(pkg.provides.items)
-        .map(toPackageReference).map(fixProvides).toSet
+        .map(d => d.toPackageReference).map(fixProvides).toSet
 
       installed.add(($pkg.name, pkg.reason == AlpmReason.explicit),
         depends + optional)
