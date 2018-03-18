@@ -14,12 +14,14 @@ type
     debug*: bool
     progressBar*: bool
     verbosePkgList*: bool
+    pgpKeyserver*: Option[string]
     ignorePkgs*: HashSet[string]
     ignoreGroups*: HashSet[string]
 
   PacmanConfig* = object of CommonConfig
     rootOption*: Option[string]
     dbOption*: Option[string]
+    gpgOption*: Option[string]
     colorMode*: ColorMode
 
   Config* = object of CommonConfig
@@ -118,8 +120,8 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let viewNoDefault = options.hasKey("ViewNoDefault")
 
   Config(root: root, db: db, tmpRoot: tmpRoot, color: color,
-    dbs: config.dbs, arch: config.arch, debug: config.debug,
-    progressBar: config.progressBar, verbosePkgList: config.verbosePkgList,
+    dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
+    verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
     ignorePkgs: config.ignoreGroups, ignoreGroups: config.ignoreGroups,
     aurComments: aurComments, checkIgnored: checkIgnored,
     printAurNotFound: printAurNotFound, viewNoDefault: viewNoDefault)

@@ -19,6 +19,7 @@ const
   sudoCmd* = "/usr/bin/sudo"
   gitCmd* = "/usr/bin/git"
   gpgCmd* = "/usr/bin/gpg"
+  gpgConfCmd* = "/usr/bin/gpgconf"
   pacmanCmd* = "/usr/bin/pacman"
   makepkgCmd* = "/usr/bin/makepkg"
 

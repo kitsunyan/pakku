@@ -595,8 +595,14 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                           ('a', tr"abort operation"))
                         keysLoop(index, newSkipKeys)
                       elif res == 'y' or newSkipKeys:
-                        let importCode = forkWait(() => execResult(gpgCmd,
-                          "--recv-keys", pgpKeys[index]))
+                        let importCode = if config.pgpKeyserver.isSome:
+                            forkWait(() => execResult(gpgCmd,
+                              "--keyserver", config.pgpKeyserver.unsafeGet,
+                              "--recv-keys", pgpKeys[index]))
+                          else:
+                            forkWait(() => execResult(gpgCmd,
+                              "--recv-keys", pgpKeys[index]))
+
                         if importCode == 0 or newSkipKeys or noconfirm:
                           keysLoop(index + 1, newSkipKeys)
                         else:

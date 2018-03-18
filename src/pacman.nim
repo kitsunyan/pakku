@@ -304,6 +304,7 @@ proc getMachineName: Option[string] =
 proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): PacmanConfig =
   let root = table.opt("RootDir")
   let db = table.opt("DBPath")
+  let gpg = table.opt("GPGDir")
   let color = if table.hasKey("Color"): ColorMode.colorAuto else: ColorMode.colorNever
   let verbosePkgList = table.hasKey("VerbosePkgLists")
   let arch = table.opt("Architecture").get("auto")
@@ -315,10 +316,9 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
     raise commandError(tr"can not get the architecture",
       colorNeeded = some(color.get))
 
-  PacmanConfig(rootOption: root, dbOption: db, dbs: dbs,
-    arch: archFinal, colorMode: color, debug: false,
-    progressBar: true, verbosePkgList: verbosePkgList,
-    ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
+  PacmanConfig(rootOption: root, dbOption: db, gpgOption: gpg, dbs: dbs, arch: archFinal,
+    colorMode: color, debug: false, progressBar: true, verbosePkgList: verbosePkgList,
+    pgpKeyserver: none(string), ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   proc getAll(pair: OptionPair): seq[string] =
@@ -340,6 +340,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
 
   let root = getAll((some("r"), "root")).optLast.orElse(defaultConfig.rootOption)
   let db = getAll((some("b"), "dbpath")).optLast.orElse(defaultConfig.dbOption)
+  let gpg = getAll((none(string), "gpgdir")).optLast.orElse(defaultConfig.gpgOption)
   let arch = getAll((none(string), "arch")).optLast.get(defaultConfig.arch)
   let colorStr = getAll((none(string), "color")).optLast.get($defaultConfig.colorMode)
   let color = getColor(colorStr)
@@ -349,10 +350,29 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let ignorePkgs = getAll((none(string), "ignore")).toSet
   let ignoreGroups = getAll((none(string), "ignoregroups")).toSet
 
-  let config = PacmanConfig(rootOption: root, dbOption: db, dbs: defaultConfig.dbs,
-    arch: arch, colorMode: color, debug: debug,
+  let hasKeyserver = runProgram(gpgConfCmd, "--list-options", "gpg")
+    .filter(s => s.len > 10 and s[0 .. 9] == "keyserver:" and not (s[^2] == ':'))
+    .len > 0
+
+  let pgpKeyserver = if hasKeyserver:
+      none(string)
+    else: (block:
+      var pgpKeyserver = none(string)
+      var file: File
+      if file.open(gpg.get(sysConfDir & "/pacman.d/gnupg") & "/gpg.conf"):
+        try:
+          while true:
+            let line = file.readLine()
+            if line.len > 10 and line[0 .. 9] == "keyserver ":
+              pgpKeyserver = some(line[9 .. ^1].strip)
+        except:
+          discard
+      pgpKeyserver)
+
+  let config = PacmanConfig(rootOption: root, dbOption: db, gpgOption: gpg,
+    dbs: defaultConfig.dbs, arch: arch, colorMode: color, debug: debug,
     progressBar: progressBar, verbosePkgList: defaultConfig.verbosePkgList,
-    ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
+    pgpKeyserver: pgpKeyserver, ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
     ignoreGroups: ignoreGroups + defaultConfig.ignoreGroups)
 
   if config.dbs.find("aur") >= 0:
