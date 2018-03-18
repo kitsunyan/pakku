@@ -41,6 +41,7 @@ type
     url*: Option[string]
     licenses*: seq[string]
     groups*: seq[string]
+    pgpKeys*: seq[string]
     depends*: seq[PackageReference]
     makeDepends*: seq[PackageReference]
     checkDepends*: seq[PackageReference]
@@ -260,6 +261,7 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
   let url = collect("url").optLast
   let licenses = collect("license")
   let groups = collect("groups")
+  let pgpKeys = collect("validpgpkeys")
 
   let depends = collectArch("depends")
   let makeDepends = collectArch("makedepends").filterReferences(depends)
@@ -273,7 +275,7 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
 
   lc[PackageInfo(baseIndex: baseIndex, baseCount: baseCount,
     repo: repo, base: b, name: name, version: v, description: description,
-    archs: archs, url: url, licenses: licenses, groups: groups,
+    archs: archs, url: url, licenses: licenses, groups: groups, pgpKeys: pgpKeys,
     depends: depends, makeDepends: makeDepends, checkDepends: checkDepends,
     optional: optional, provides: provides, conflicts: conflicts, replaces: replaces,
     maintainer: info.map(i => i.maintainer).flatten,

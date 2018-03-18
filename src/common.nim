@@ -237,6 +237,15 @@ proc obtainSrcInfo*(path: string): string =
   execProcess(bashCmd, ["-c", """cd "$2" && "$1" --printsrcinfo""",
     "bash", makePkgCmd, path], options = {})
 
+proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): seq[PackageInfo] =
+  let srcInfo = obtainSrcInfo(path)
+  let res = parseSrcInfo(pkgInfos[0].repo, srcInfo, config.arch,
+    pkgInfos[0].gitUrl, pkgInfos[0].gitBranch, pkgInfos[0].gitCommit, pkgInfos[0].gitPath)
+  if res.len > 0:
+    res
+  else:
+    pkgInfos
+
 proc obtainBuildPkgInfos*(config: Config,
   pacmanTargets: seq[FullPackageTarget[RpcPackageInfo]]): (seq[PackageInfo], seq[string]) =
   type

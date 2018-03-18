@@ -346,9 +346,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
       printError(config.color, tr"failed to build '$#'" % [base])
       (none(BuildResult), buildCode)
     else:
-      let srcInfo = obtainSrcInfo(buildPath)
-      let resultPkgInfos = parseSrcInfo(pkgInfos[0].repo, srcInfo, config.arch,
-        pkgInfos[0].gitUrl, pkgInfos[0].gitBranch, pkgInfos[0].gitCommit, some(buildPath))
+      let resultPkgInfos = reloadPkgInfos(config, buildPath, pkgInfos)
 
       type ResultInfo = tuple[name: string, baseIndex: int, pkgInfo: Option[PackageInfo]]
 
@@ -541,7 +539,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
           if cloneCode != 0:
             (paths, cloneCode)
           else:
-            proc checkNext(index: int, skipEdit: bool): int =
+            proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
               if index < flatBasePackages.len:
                 let pkgInfos = flatBasePackages[index]
                 let base = pkgInfos[0].base
@@ -557,20 +555,66 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                     let commentsReversed = toSeq(comments.reversed)
                     printComments(config.color, pkgInfos[0].maintainer, commentsReversed)
 
-                let res = if skipEdit:
+                let editRes = if skipEdit:
                     'n'
                   else: (block:
                     let defaultYes = aur and not config.viewNoDefault
                     editLoop(config, base, repoPath, pkgInfos[0].gitPath, defaultYes, noconfirm))
 
-                if res == 'a':
+                if editRes == 'a':
                   1
                 else:
-                  checkNext(index + 1, skipEdit or res == 's')
+                  let resultPkgInfos = reloadPkgInfos(config,
+                    repoPath & "/" & pkgInfos[0].gitPath.get("."), pkgInfos)
+                  let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
+
+                  proc keysLoop(index: int, skipKeys: bool): char =
+                    if index >= pgpKeys.len:
+                      'n'
+                    elif forkWait(() => (block:
+                      discard close(0)
+                      discard open("/dev/null")
+                      discard close(1)
+                      discard open("/dev/null")
+                      discard close(2)
+                      discard open("/dev/null")
+                      execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
+                      keysLoop(index + 1, skipKeys)
+                    else:
+                      let res = if skipKeys:
+                          'y'
+                        else:
+                          printColonUserChoice(config.color,
+                            tr"Import PGP key $#?" % [pgpKeys[index]], ['y', 'n', 'c', 'a', '?'],
+                            'y', '?', noconfirm, 'y')
+
+                      let newSkipKeys = skipKeys or res == 'c'
+
+                      if res == '?':
+                        printUserInputHelp(('c', tr"import all keys"),
+                          ('a', tr"abort operation"))
+                        keysLoop(index, newSkipKeys)
+                      elif res == 'y' or newSkipKeys:
+                        let importCode = forkWait(() => execResult(gpgCmd,
+                          "--recv-keys", pgpKeys[index]))
+                        if importCode == 0 or newSkipKeys or noconfirm:
+                          keysLoop(index + 1, newSkipKeys)
+                        else:
+                          keysLoop(index, newSkipKeys)
+                      elif res == 'n':
+                        keysLoop(index + 1, newSkipKeys)
+                      else:
+                        res
+
+                  let keysRes = keysLoop(0, skipKeys)
+                  if keysRes == 'a':
+                    1
+                  else:
+                    checkNext(index + 1, skipEdit or editRes == 's', skipKeys or keysRes == 's')
               else:
                 0
 
-            (paths, checkNext(0, false))
+            (paths, checkNext(0, false, false))
         else:
           (@[], 1))
       else:
