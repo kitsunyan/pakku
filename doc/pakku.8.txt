@@ -31,6 +31,9 @@ Sync Options (apply to '-S')[[SO]]
 	Build packages from source. Building is supported for directly specified
 	packages only, so it will not work for package groups or virtual packages.
 
+*\--keyserver* <name>::
+	Use name as keyserver to receive keys from.
+
 *\--noaur*::
 	Disable AUR support. This option is assumed when you use non-standard
 	root path, allow downgrading using twice specified '-u', skip dependency

@@ -19,7 +19,7 @@ _pakku() {
   remove=('cascade dbonly nodeps assume-installed nosave print recursive unneeded' 'c n p s u')
   sync=('asdeps asexplicit clean dbonly downloadonly force groups ignore ignoregroup
          info list needed nodeps assume-installed print refresh recursive search sysupgrade
-         noaur build'
+         build keyserver noaur'
         'c g i l p s u w y')
   upgrade=('asdeps asexplicit force needed nodeps assume-installed print recursive' 'p')
   common=('arch cachedir color config confirm dbpath debug gpgdir help hookdir logfile
@@ -33,7 +33,7 @@ _pakku() {
   if [[ $? != 0 ]]; then
     _arch_ptr2comp core
   elif [[ ! $prev =~ ^-\w*[Vbhr] &&
-    ! $prev = --@(cachedir|color|config|dbpath|help|hookdir|gpgdir|logfile|root|version) ]]
+    ! $prev = --@(cachedir|color|config|dbpath|help|hookdir|gpgdir|keyserver|logfile|root|version) ]]
   then
     [[ $cur = -* ]] && _arch_ptr2comp ${o#* } common ||
       case ${o% *} in

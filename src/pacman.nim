@@ -140,6 +140,7 @@ const
     o("w", "downloadonly"),
     o("y", "refresh") + g(syncInstall, syncSearch, syncQuery),
     $o("build") + g(syncInstall),
+    $(^o("keyserver")) + g(syncInstall),
     $o("noaur") + g(syncInstall)
   ]
 
@@ -174,7 +175,8 @@ const
   syncConflictingOptions*: seq[ConflictingOptions] = @[
     ("asdeps", @["asexplicit"]),
     ("build", @["nodeps", "assume-installed", "dbonly", "clean",
-      "groups", "info", "list", "search", "sysupgrade", "downloadonly"])
+      "groups", "info", "list", "search", "sysupgrade", "downloadonly"]),
+    ("keyserver", @["clean", "groups", "info", "list", "search"])
   ]
 
   allConflictingOptions = syncConflictingOptions
@@ -357,17 +359,21 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let pgpKeyserver = if hasKeyserver:
       none(string)
     else: (block:
-      var pgpKeyserver = none(string)
-      var file: File
-      if file.open(gpg.get(sysConfDir & "/pacman.d/gnupg") & "/gpg.conf"):
-        try:
-          while true:
-            let line = file.readLine()
-            if line.len > 10 and line[0 .. 9] == "keyserver ":
-              pgpKeyserver = some(line[9 .. ^1].strip)
-        except:
-          discard
-      pgpKeyserver)
+      let argPgpKeyserver = getAll((none(string), "keyserver")).optLast
+      if argPgpKeyserver.isSome:
+        argPgpKeyserver
+      else:
+        var pgpKeyserver = none(string)
+        var file: File
+        if file.open(gpg.get(sysConfDir & "/pacman.d/gnupg") & "/gpg.conf"):
+          try:
+            while true:
+              let line = file.readLine()
+              if line.len > 10 and line[0 .. 9] == "keyserver ":
+                pgpKeyserver = some(line[9 .. ^1].strip)
+          except:
+            discard
+        pgpKeyserver)
 
   let config = PacmanConfig(rootOption: root, dbOption: db, gpgOption: gpg,
     dbs: defaultConfig.dbs, arch: arch, colorMode: color, debug: debug,
