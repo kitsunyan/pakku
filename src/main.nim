@@ -160,7 +160,11 @@ proc handleUpgrade(args: seq[Argument], config: Config): int =
 
 proc handleHelp(operation: OperationType) =
   proc printHelp(command: string, text: string) =
-    echo(' '.repeat(6), "--", command, ' '.repeat(15 - command.len), text)
+    if command.len > 14:
+      echo(' '.repeat(6), "--", command)
+      echo(' '.repeat(23), text)
+    else:
+      echo(' '.repeat(6), "--", command, ' '.repeat(15 - command.len), text)
 
   let operationArgs = operations
     .filter(o => o.otype == operation)
@@ -176,6 +180,7 @@ proc handleHelp(operation: OperationType) =
     case operation:
       of OperationType.sync:
         printHelp("build", tr"build targets from source")
+        printHelp("keyserver <name>", tr"use name as keyserver to receive keys from")
         printHelp("noaur", tr"disable all AUR operations")
       else:
         discard
