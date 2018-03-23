@@ -122,6 +122,6 @@ proc obtainConfig*(config: PacmanConfig): Config =
   Config(root: root, db: db, tmpRoot: tmpRoot, color: color,
     dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
-    ignorePkgs: config.ignoreGroups, ignoreGroups: config.ignoreGroups,
+    ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
     aurComments: aurComments, checkIgnored: checkIgnored,
     printAurNotFound: printAurNotFound, viewNoDefault: viewNoDefault)

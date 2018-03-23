@@ -759,7 +759,7 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
     else:
       true))
 
-  let nonConflicingPkgInfos = pkgInfos.foldl(block:
+  let nonConflicingPkgInfos = acceptedPkgInfos.foldl(block:
     let conflictsWith = lc[p | (p <- a, p.name != b.name and
       (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.toPackageReference)), int].len > 0 or
         lc[0 | (c <- p.conflicts, c.isProvidedBy(b.toPackageReference)), int].len > 0)),
