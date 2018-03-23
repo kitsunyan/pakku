@@ -25,6 +25,18 @@ type
   FullPackageTarget*[T] = object of SyncPackageTarget
     pkgInfo*: Option[T]
 
+  LookupBaseGroup = tuple[
+    base: string,
+    version: string,
+    arch: string,
+    repo: string
+  ]
+
+  LookupGitResult = tuple[
+    group: LookupBaseGroup,
+    git: Option[GitRepo]
+  ]
+
 proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: seq[Argument]] =
   let refreshCount = args.count((some("y"), "refresh"))
   if refreshCount > 0:
@@ -246,28 +258,8 @@ proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): 
   else:
     pkgInfos
 
-proc obtainBuildPkgInfos*(config: Config,
-  pacmanTargets: seq[FullPackageTarget[RpcPackageInfo]]): (seq[PackageInfo], seq[string]) =
-  type
-    LookupBaseGroup = tuple[
-      base: string,
-      version: string,
-      arch: string,
-      repo: string
-    ]
-
-    LookupGitResult = tuple[
-      group: LookupBaseGroup,
-      git: Option[GitRepo]
-    ]
-
-  let bases: seq[LookupBaseGroup] = pacmanTargets
-    .map(target => (block:
-      let info = target.foundInfo.get
-      let pkg = info.pkg.get
-      (pkg.base, pkg.version, pkg.arch.get, info.repo)))
-    .deduplicate
-
+proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
+  pacmanTargetNames: seq[string]): (seq[PackageInfo], seq[string]) =
   let lookupResults: seq[LookupGitResult] = bases
     .map(b => (b, lookupGitRepo(b.repo, b.base, b.arch)))
   let notFoundRepos = lookupResults.filter(r => r.git.isNone)
@@ -311,14 +303,26 @@ proc obtainBuildPkgInfos*(config: Config,
 
       let pkgInfosTable = pkgInfos.map(i => (i.name, i)).toTable
 
-      let foundPkgInfos = lc[x | (y <- pacmanTargets,
-        x <- pkgInfosTable.opt(y.name)), PackageInfo]
-      let messages = pacmanTargets
-        .filter(t => not pkgInfosTable.hasKey(t.name))
-        .map(t => tr"$#: failed to get package info" % [t.name])
+      let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
+        x <- pkgInfosTable.opt(y)), PackageInfo]
+      let messages = pacmanTargetNames
+        .filter(n => not pkgInfosTable.hasKey(n))
+        .map(n => tr"$#: failed to get package info" % [n])
 
       discard rmdir(config.tmpRoot)
       (foundPkgInfos, messages)
+
+proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
+  pacmanTargets: seq[FullPackageTarget[T]]): (seq[PackageInfo], seq[string]) =
+  let bases = pacmanTargets
+    .map(proc (target: FullPackageTarget[T]): LookupBaseGroup =
+      let info = target.foundInfo.get
+      let pkg = info.pkg.get
+      (pkg.base, pkg.version, pkg.arch.get, info.repo))
+    .deduplicate
+
+  let pacmanTargetNames = pacmanTargets.map(t => t.name)
+  obtainBuildPkgInfosInternal(config, bases, pacmanTargetNames)
 
 proc cloneRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[string]) =
   let base = basePackages[0].base

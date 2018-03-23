@@ -27,17 +27,17 @@ proc groupsSeq(pkg: ptr AlpmPackage): seq[string] =
   toSeq(pkg.groups.items).map(s => $s)
 
 proc orderInstallation(ordered: seq[seq[seq[PackageInfo]]], grouped: seq[seq[PackageInfo]],
-  dependencies: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
+  satisfied: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
   let orderedNamesSet = lc[c.name | (a <- ordered, b <- a, c <- b), string].toSet
 
   proc hasBuildDependency(pkgInfos: seq[PackageInfo]): bool =
     for pkgInfo in pkgInfos:
       for reference in pkgInfo.allDepends:
-        let satres = dependencies[reference]
-        if satres.buildPkgInfo.isSome and
-          not (satres.buildPkgInfo.unsafeGet in pkgInfos) and
-          not (satres.buildPkgInfo.unsafeGet.name in orderedNamesSet):
-          return true
+        for satres in satisfied.opt(reference):
+          if satres.buildPkgInfo.isSome and
+            not (satres.buildPkgInfo.unsafeGet in pkgInfos) and
+            not (satres.buildPkgInfo.unsafeGet.name in orderedNamesSet):
+            return true
     return false
 
   let split: seq[tuple[pkgInfos: seq[PackageInfo], dependent: bool]] =
@@ -50,15 +50,15 @@ proc orderInstallation(ordered: seq[seq[seq[PackageInfo]]], grouped: seq[seq[Pac
     if unordered.len == grouped.len:
       newOrdered & unordered
     else:
-      orderInstallation(newOrdered, unordered, dependencies)
+      orderInstallation(newOrdered, unordered, satisfied)
   else:
     newOrdered
 
 proc orderInstallation(pkgInfos: seq[PackageInfo],
-  dependencies: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
+  satisfied: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
   let grouped = pkgInfos.groupBy(i => i.base).map(p => p.values)
 
-  orderInstallation(@[], grouped, dependencies)
+  orderInstallation(@[], grouped, satisfied)
     .map(x => x.filter(s => s.len > 0))
     .filter(x => x.len > 0)
 
@@ -482,7 +482,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 
 proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
-  dependencies: Table[PackageReference, SatisfyResult],
+  satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
   directPacmanTargets: seq[string], additionalPacmanTargets: seq[string],
   basePackages: seq[seq[seq[PackageInfo]]]): int =
   let (directCode, directSome) = if directPacmanTargets.len > 0 or upgradeCount > 0:
@@ -491,8 +491,14 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
     else:
       (0, false)
 
-  if directCode != 0:
-    directCode
+  let directSatisfiedCode = if directCode == 0 and unsatisfied.len > 0: (block:
+      printUnsatisfied(config, satisfied, unsatisfied)
+      1)
+    else:
+      directCode
+
+  if directSatisfiedCode != 0:
+    directSatisfiedCode
   else:
     let commonArgs = args.keepOnlyOptions(commonOptions, upgradeCommonOptions)
 
@@ -665,12 +671,12 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                     return true
               return false
 
-            lc[x.key | (x <- dependencies.namedPairs, not x.value.installed and
+            lc[x.key | (x <- satisfied.namedPairs, not x.value.installed and
               x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
 
           if unsatisfied.len > 0:
             removeTmp()
-            printUnsatisfied(config, dependencies, unsatisfied)
+            printUnsatisfied(config, satisfied, unsatisfied)
             1
           else:
             proc installNext(index: int, lastCode: int): (int, int) =
@@ -692,15 +698,26 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
         else:
           0
 
-proc handlePrint(args: seq[Argument], config: Config, printFormat: string,
-  upgradeCount: int, directPacmanTargets: seq[string], additionalPacmanTargets: seq[string],
+proc handlePrint(args: seq[Argument], config: Config, printFormat: string, upgradeCount: int,
+  satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
+  directPacmanTargets: seq[string], additionalPacmanTargets: seq[string],
   basePackages: seq[seq[seq[PackageInfo]]]): int =
 
   let code = if directPacmanTargets.len > 0 or
-    additionalPacmanTargets.len > 0 or upgradeCount > 0:
-      pacmanRun(false, config.color, args.filter(arg => not arg.isTarget) &
-        (directPacmanTargets & additionalPacmanTargets)
-        .map(t => (t, none(string), ArgumentType.target)))
+    additionalPacmanTargets.len > 0 or upgradeCount > 0: (block:
+      let pacmanTargets = if unsatisfied.len > 0:
+          directPacmanTargets
+        else:
+          directPacmanTargets & additionalPacmanTargets
+
+      let code = pacmanRun(false, config.color, args.filter(arg => not arg.isTarget) &
+        pacmanTargets.map(t => (t, none(string), ArgumentType.target)))
+
+      if unsatisfied.len > 0:
+        printUnsatisfied(config, satisfied, unsatisfied)
+        1
+      else:
+        code)
     else:
       0
 
@@ -720,6 +737,77 @@ proc handlePrint(args: seq[Argument], config: Config, printFormat: string,
     0
   else:
     code
+
+proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
+  targetsSet: HashSet[string], installed: Table[string, Installed],
+  print: bool, noconfirm: bool): (seq[PackageInfo], seq[PackageInfo]) =
+  let acceptedPkgInfos = pkgInfos.filter(pkgInfo => (block:
+    let instGroups = lc[x | (i <- installed.opt(pkgInfo.name),
+      x <- i.groups), string]
+
+    if config.ignored(pkgInfo.name, (instGroups & pkgInfo.groups).deduplicate):
+      if pkgInfo.name in targetsSet:
+        if not print:
+          let input = printColonUserChoice(config.color,
+            trp"%s is in IgnorePkg/IgnoreGroup. Install anyway?" % [pkgInfo.name],
+            ['y', 'n'], 'y', 'n', noconfirm, 'y')
+          input != 'n'
+        else:
+          true
+      else:
+        false
+    else:
+      true))
+
+  let nonConflicingPkgInfos = pkgInfos.foldl(block:
+    let conflictsWith = lc[p | (p <- a, p.name != b.name and
+      (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.toPackageReference)), int].len > 0 or
+        lc[0 | (c <- p.conflicts, c.isProvidedBy(b.toPackageReference)), int].len > 0)),
+      PackageInfo]
+    if not print and conflictsWith.len > 0:
+      for conflict in conflictsWith:
+        printWarning(config.color,
+          tra("removing '%s' from target list because it conflicts with '%s'\n") %
+          [b.name, conflict.name])
+      a
+    else:
+      a & b,
+    newSeq[PackageInfo]())
+
+  (nonConflicingPkgInfos, acceptedPkgInfos)
+
+proc checkNeeded(installed: Table[string, Installed], name: string, version: string): bool =
+  if installed.hasKey(name):
+    let i = installed[name]
+    vercmp(version, i.version) > 0
+  else:
+    true
+
+proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
+  targets: seq[FullPackageTarget[RpcPackageInfo]],
+  installed: Table[string, Installed], print: bool, needed: bool,
+  upgradeCount: int): (seq[PackageInfo], seq[string]) =
+  let targetRpcInfos: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
+    targets.map(t => t.pkgInfo.get).map(i => (i, installed.checkNeeded(i.name, i.version)))
+
+  if not print and needed:
+    for pair in targetRpcInfos:
+      if not pair.upgradeable:
+        # not upgradeable assumes that package is installed
+        let inst = installed[pair.rpcInfo.name]
+        printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
+          [pair.rpcInfo.name, inst.version])
+
+  let targetsSet = targets.map(t => t.name).toSet
+  let fullRpcInfos = (targetRpcInfos
+    .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo) &
+    rpcInfos.filter(i => upgradeCount > 0 and not (i.name in targetsSet) and
+      installed.checkNeeded(i.name, i.version))).deduplicate
+
+  if fullRpcInfos.len > 0 and not print:
+    echo(tr"downloading full package descriptions...")
+  getAurPackageInfo(fullRpcInfos.map(i => i.name),
+    some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)
 
 proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
@@ -770,19 +858,15 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   withAur():
     if realCheckAur.len > 0 and printFormat.isNone:
       printColon(config.color, tr"Checking AUR database...")
-    let (rpcInfos, aerrors) = getRpcPackageInfo(realCheckAur)
-    for e in aerrors: printError(config.color, e)
+    let (rpcInfos, rerrors) = getRpcPackageInfo(realCheckAur)
+    for e in rerrors: printError(config.color, e)
 
-    let (rpcInfoTable, notFoundTargets) = filterNotFoundSyncTargets(syncTargets, rpcInfos)
+    let (rpcInfoTable, rpcNotFoundTargets) = filterNotFoundSyncTargets(syncTargets, rpcInfos)
 
-    if notFoundTargets.len > 0:
-      printSyncNotFound(config, notFoundTargets)
+    if rpcNotFoundTargets.len > 0:
+      printSyncNotFound(config, rpcNotFoundTargets)
       1
     else:
-      let fullTargets = mapAurTargets(syncTargets, rpcInfos)
-      let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
-      let aurTargets = fullTargets.filter(isAurTargetFull)
-
       if upgradeCount > 0 and not noaur and printFormat.isNone and config.printAurNotFound:
         for inst in installed:
           if inst.foreign and not config.ignored(inst.name, inst.groups) and
@@ -790,44 +874,26 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
             printWarning(config.color, tr"$# was not found in AUR" % [inst.name])
 
       let installedTable = installed.map(i => (i.name, i)).toTable
+      let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos).filter(isAurTargetFull)
 
-      proc checkNeeded(name: string, version: string): bool =
-        if installedTable.hasKey(name):
-          let i = installedTable[name]
-          vercmp(version, i.version) > 0
-        else:
-          true
+      let (aurPkgInfos, aperrors) = obtainAurPackageInfos(config, rpcInfos, rpcAurTargets,
+        installedTable, printFormat.isSome, needed, upgradeCount)
+      for e in aperrors: printError(config.color, e)
 
-      let targetRpcInfos: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
-        aurTargets.map(t => t.pkgInfo.get).map(i => (i, checkNeeded(i.name, i.version)))
+      let (_, notFoundTargets) = filterNotFoundSyncTargets(syncTargets, aurPkgInfos)
 
-      if printFormat.isNone and needed:
-        for rpcInfo in targetRpcInfos:
-          if not rpcInfo.upgradeable:
-            # not upgradeable assumes that package is installed
-            let inst = installedTable[rpcInfo.rpcInfo.name]
-            printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
-              [rpcInfo.rpcInfo.name, inst.version])
-
-      let aurTargetsSet = aurTargets.map(t => t.name).toSet
-      let fullRpcInfos = (targetRpcInfos
-        .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo) &
-        rpcInfos.filter(i => upgradeCount > 0 and not (i.name in aurTargetsSet) and
-          checkNeeded(i.name, i.version))).deduplicate
-
-      if fullRpcInfos.len > 0 and printFormat.isNone:
-        echo(tr"downloading full package descriptions...")
-      let (aurPkgInfos, faerrors) = getAurPackageInfo(fullRpcInfos.map(i => i.name),
-        some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)
-
-      if faerrors.len > 0:
-        for e in faerrors: printError(config.color, e)
+      if notFoundTargets.len > 0:
+        printSyncNotFound(config, notFoundTargets)
         1
       else:
+        let fullTargets = mapAurTargets(syncTargets, aurPkgInfos)
+        let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
+        let aurTargets = fullTargets.filter(isAurTargetFull)
+
         let neededPacmanTargets = if printFormat.isNone and build and needed:
             pacmanTargets.filter(target => (block:
               let version = target.foundInfo.get.pkg.get.version
-              if checkNeeded(target.name, version):
+              if installedTable.checkNeeded(target.name, version):
                 true
               else:
                 printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
@@ -841,99 +907,62 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
 
         let (buildPkgInfos, obtainErrorMessages) = if checkPacmanPkgInfos: (block:
             printColon(config.color, tr"Checking repositories...")
-            obtainBuildPkgInfos(config, pacmanTargets))
+            obtainBuildPkgInfos[PackageInfo](config, pacmanTargets))
           else:
             (@[], @[])
 
         if checkPacmanPkgInfos and buildPkgInfos.len < pacmanTargets.len:
+          # "--build" conflicts with "--sysupgrade", so it's ok to fail here
           for e in obtainErrorMessages: printError(config.color, e)
           1
         else:
           let pkgInfos = buildPkgInfos & aurPkgInfos
-          let targetsSet = fullTargets.map(t => t.name).toSet
-
-          let acceptedPkgInfos = pkgInfos.filter(pkgInfo => (block:
-            let instGroups = lc[x | (i <- installedTable.opt(pkgInfo.name),
-              x <- i.groups), string]
-
-            if config.ignored(pkgInfo.name, (instGroups & pkgInfo.groups).deduplicate):
-              if pkgInfo.name in targetsSet:
-                if printFormat.isNone:
-                  let input = printColonUserChoice(config.color,
-                    trp"%s is in IgnorePkg/IgnoreGroup. Install anyway?" % [pkgInfo.name],
-                    ['y', 'n'], 'y', 'n', noconfirm, 'y')
-                  input != 'n'
-                else:
-                  true
-              else:
-                false
-            else:
-              true))
-
-          let nonConflicingPkgInfos = pkgInfos.foldl(block:
-            let conflictsWith = lc[p | (p <- a, p.name != b.name and
-              (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.toPackageReference)), int].len > 0 or
-                lc[0 | (c <- p.conflicts, c.isProvidedBy(b.toPackageReference)), int].len > 0)),
-              PackageInfo]
-            if printFormat.isNone and conflictsWith.len > 0:
-              for conflict in conflictsWith:
-                printWarning(config.color,
-                  tra("removing '%s' from target list because it conflicts with '%s'\n") %
-                  [b.name, conflict.name])
-              a
-            else:
-              a & b,
-            newSeq[PackageInfo]())
-
-          let finalPkgInfos = nonConflicingPkgInfos
+          let targetsSet = (pacmanTargets & aurTargets).map(t => t.name).toSet
+          let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
+            targetsSet, installedTable, printFormat.isSome, noconfirm)
 
           if finalPkgInfos.len > 0 and printFormat.isNone:
             echo(trp("resolving dependencies...\n"))
           let (satisfied, unsatisfied) = withAlpm(config.root, config.db,
             config.dbs, config.arch, handle, dbs, errors):
-            findDependencies(config, handle, dbs, finalPkgInfos,
-              printFormat.isSome, noaur)
+            findDependencies(config, handle, dbs, finalPkgInfos, printFormat.isSome, noaur)
 
-          if unsatisfied.len > 0:
-            printUnsatisfied(config, satisfied, unsatisfied)
-            1
-          else:
-            if printFormat.isNone:
-              let acceptedSet = acceptedPkgInfos.map(i => i.name).toSet
+          if printFormat.isNone:
+            let acceptedSet = acceptedPkgInfos.map(i => i.name).toSet
 
-              for pkgInfo in pkgInfos:
-                if not (pkgInfo.name in acceptedSet):
-                  if not (pkgInfo.name in targetsSet) and upgradeCount > 0 and
-                    installedTable.hasKey(pkgInfo.name):
-                    printWarning(config.color, tra("%s: ignoring package upgrade (%s => %s)\n") %
-                      [pkgInfo.name, installedTable[pkgInfo.name].version, pkgInfo.version])
-                  else:
-                    printWarning(config.color, trp("skipping target: %s\n") % [pkgInfo.name])
-                elif pkgInfo.repo == "aur" and pkgInfo.maintainer.isNone:
-                  printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
-
-            let aurPrintSet = finalPkgInfos.map(i => i.name).toSet
-            let fullPkgInfos = finalPkgInfos & lc[i | (s <- satisfied.values,
-              i <- s.buildPkgInfo, not (i.name in aurPrintSet)), PackageInfo].deduplicate
-
-            let directPacmanTargets = pacmanTargets.map(t => t.formatArgument)
-            let additionalPacmanTargets = lc[x.name | (x <- satisfied.values,
-              not x.installed and x.buildPkgInfo.isNone), string]
-            let orderedPkgInfos = orderInstallation(fullPkgInfos, satisfied)
-
-            let pacmanArgs = callArgs.filterExtensions(true, true)
-
-            if printFormat.isSome:
-              handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount,
-                directPacmanTargets, additionalPacmanTargets, orderedPkgInfos)
-            else:
-              let explicits = if not args.check((none(string), "asdeps")):
-                  targets.map(t => t.name)
+            for pkgInfo in pkgInfos:
+              if not (pkgInfo.name in acceptedSet):
+                if not (pkgInfo.name in targetsSet) and upgradeCount > 0 and
+                  installedTable.hasKey(pkgInfo.name):
+                  printWarning(config.color, tra("%s: ignoring package upgrade (%s => %s)\n") %
+                    [pkgInfo.name, installedTable[pkgInfo.name].version, pkgInfo.version])
                 else:
-                  @[]
+                  printWarning(config.color, trp("skipping target: %s\n") % [pkgInfo.name])
+              elif pkgInfo.repo == "aur" and pkgInfo.maintainer.isNone:
+                printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
 
-              let passDirectPacmanTargets = if build: @[] else: directPacmanTargets
+          let buildAndAurTargetSet = finalPkgInfos.map(i => i.name).toSet
+          let fullPkgInfos = finalPkgInfos & lc[i | (s <- satisfied.values,
+            i <- s.buildPkgInfo, not (i.name in buildAndAurTargetSet)), PackageInfo].deduplicate
 
-              handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
-                explicits.toSet, installed, satisfied, passDirectPacmanTargets,
-                additionalPacmanTargets, orderedPkgInfos)
+          let directPacmanTargets = pacmanTargets.map(t => t.formatArgument)
+          let additionalPacmanTargets = lc[x.name | (x <- satisfied.values,
+            not x.installed and x.buildPkgInfo.isNone), string]
+          let orderedPkgInfos = orderInstallation(fullPkgInfos, satisfied)
+
+          let pacmanArgs = callArgs.filterExtensions(true, true)
+          if printFormat.isSome:
+            handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount,
+              satisfied, unsatisfied, directPacmanTargets, additionalPacmanTargets,
+              orderedPkgInfos)
+          else:
+            let explicits = if not args.check((none(string), "asdeps")):
+                targets.map(t => t.name)
+              else:
+                @[]
+
+            let passDirectPacmanTargets = if build: @[] else: directPacmanTargets
+
+            handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
+              explicits.toSet, installed, satisfied, unsatisfied, passDirectPacmanTargets,
+              additionalPacmanTargets, orderedPkgInfos)
