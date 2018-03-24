@@ -157,7 +157,7 @@ proc isProvidedBy*(package: PackageReference, by: PackageReference): bool =
       true
     else:
       let lcon = package.constraint.unsafeGet
-      let rcon = package.constraint.unsafeGet
+      let rcon = by.constraint.unsafeGet
       let cmp = vercmp(lcon.version, rcon.version)
       checkConstraints(lcon.operation, rcon.operation, cmp)
   else:
@@ -228,7 +228,7 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
       else:
         (none(string), name)
 
-    if workName.match(re"([^><=]*)\ *(>|<|=|>=|<=)\ *([^ ]*)", matches):
+    if workName.match(re"([^><=]*)\ *(=|>=|<=|>|<)\ *([^ ]*)", matches):
       let constraints = toSeq(enumerate[ConstraintOperation]())
       let index = constraints.map(s => $s).find(matches[1])
 
