@@ -441,11 +441,13 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 
   let files = lc[(p.key, formatArchiveFile(p.value, br.ext)) |
     (br <- buildResults, p <- br.pkgInfos.namedPairs), (string, string)].toTable
-  let install = lc[x | (g <- basePackages, i <- g, x <- files.opt(i.name)), string]
+  let install = lc[(i.name, x) | (g <- basePackages, i <- g, x <- files.opt(i.name)),
+    tuple[name: string, file: string]]
 
   proc handleTmpRoot(clear: bool) =
+    let files = install.map(p => p.file)
     for _, file in files:
-      if clear or not (file in install):
+      if clear or not (file in files):
         try:
           removeFile(file)
         except:
@@ -466,19 +468,29 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       handleTmpRoot(false)
       1
     else:
-      let explicit = basePackages.filter(p => p.filter(i => i.name in explicits).len > 0).len > 0
-      let asdepsSeq = if not explicit: @[("asdeps", none(string), ArgumentType.long)] else: @[]
+      let asdeps = install.filter(p => not (p.name in explicits)).map(p => p.file)
+      let asexplicit = install.filter(p => p.name in explicits).map(p => p.file)
 
-      let installCode = pacmanRun(true, config.color, commonArgs &
-        ("U", none(string), ArgumentType.short) & asdepsSeq &
-        install.map(i => (i, none(string), ArgumentType.target)))
+      proc doInstall(files: seq[string], addArgs: seq[Argument]): int =
+        if files.len > 0:
+          pacmanRun(true, config.color, commonArgs &
+            ("U", none(string), ArgumentType.short) & addArgs &
+            files.map(f => (f, none(string), ArgumentType.target)))
+        else:
+          0
 
-      if installCode != 0:
+      let asdepsCode = doInstall(asdeps, @[("asdeps", none(string), ArgumentType.long)])
+      if asdepsCode != 0:
         handleTmpRoot(false)
-        installCode
+        asdepsCode
       else:
-        handleTmpRoot(true)
-        0
+        let asexplicitCode = doInstall(asexplicit, @[])
+        if asexplicitCode != 0:
+          handleTmpRoot(false)
+          asexplicitCode
+        else:
+          handleTmpRoot(true)
+          0
 
 proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
