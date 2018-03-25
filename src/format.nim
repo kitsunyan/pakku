@@ -52,6 +52,12 @@ proc getWindowSize(): tuple[width: int, height: int] =
   else:
     (0, 0)
 
+proc printError*(color: bool, s: string) =
+  stderr.writeLine(^Color.red, trp"error: ", ^Color.normal, s)
+
+proc printWarning*(color: bool, s: string) =
+  stderr.writeLine(^Color.yellow, trp"warning: ", ^Color.normal, s)
+
 proc formatPkgRating*(votes: int, popularity: float): string =
   $votes & " / " & formatFloat(popularity, format = ffDecimal, precision = 6)
 
@@ -134,21 +140,48 @@ proc printPackageSearch*(color: bool, repo: string, name: string,
   for line in lines:
     echo(' '.repeat(padding), line)
 
-proc printPackages*(color: bool, verbose: bool, packages: seq[PackageInstallFormat]) =
-  if verbose:
-    let packageTitle = trp"Package" & " (" & $packages.len & ")"
-    let oldVersionTitle = trp"Old Version"
-    let newVersionTitle = trp"New Version"
+proc printPackagesRegular(color: bool, warn: bool, packages: seq[PackageInstallFormat]) =
+  let title = trp"Packages" & " (" & $packages.len & ") "
+  let padding = title.runeLen
+  let lines = packages.map(p => p.name & "-" & p.newVersion).foldl(a & "  " & b)
+    .splitLines(getWindowSize().width - padding)
 
-    let packageLen = max(packageTitle.runeLen,
-      packages.map(p => p.name.len + 1 + p.repo.len).max)
+  echo()
+  if warn:
+    printWarning(color, trp("insufficient columns available for table display\n"))
+  echo(^Color.bold, title, ^Color.normal, lines[0])
+  for line in lines[1 .. ^1]:
+    echo(' '.repeat(padding), line)
+  echo()
 
-    let oldVersionLenEmpty = packages.map(p => p.oldVersion.map(v => v.len).get(0)).max
-    let oldVersionLen = if oldVersionLenEmpty > 0:
-        max(oldVersionTitle.runeLen, oldVersionLenEmpty)
-      else:
-        0
+proc printPackagesVerbose(color: bool, packages: seq[PackageInstallFormat]) =
+  let packageTitle = trp"Package" & " (" & $packages.len & ")"
+  let oldVersionTitle = trp"Old Version"
+  let newVersionTitle = trp"New Version"
 
+  let packageLen = max(packageTitle.runeLen,
+    packages.map(p => p.name.len + 1 + p.repo.len).max)
+
+  let oldVersionLenEmpty = packages.map(p => p.oldVersion.map(v => v.len).get(0)).max
+  let oldVersionLen = if oldVersionLenEmpty > 0:
+      max(oldVersionTitle.runeLen, oldVersionLenEmpty)
+    else:
+      0
+
+  let newVersionLenEmpty = packages.map(p => p.newVersion.len).max
+  let newVersionLen = if newVersionLenEmpty > 0:
+      max(newVersionTitle.runeLen, newVersionLenEmpty)
+    else:
+      0
+
+  let totalLen = packageLen +
+    (if oldVersionLen > 0: oldVersionLen + 2 else: 0) +
+    (if newVersionLen > 0: newVersionLen + 2 else: 0)
+
+  let width = getWindowSize().width
+  if width > 0 and totalLen > width:
+    printPackagesRegular(color, true, packages)
+  else:
     echo()
     echo(^Color.bold & packageTitle &
       ' '.repeat(packageLen - packageTitle.runeLen) &
@@ -164,17 +197,12 @@ proc printPackages*(color: bool, verbose: bool, packages: seq[PackageInstallForm
           ' '.repeat(oldVersionLen - oldVersion.len) else: "") &
         "  " & package.newVersion)
     echo()
-  else:
-    let title = trp"Packages" & " (" & $packages.len & ") "
-    let padding = title.runeLen
-    let lines = packages.map(p => p.name & "-" & p.newVersion).foldl(a & "  " & b)
-      .splitLines(getWindowSize().width - padding)
 
-    echo()
-    echo(^Color.bold, title, ^Color.normal, lines[0])
-    for line in lines[1 .. ^1]:
-      echo(' '.repeat(padding), line)
-    echo()
+proc printPackages*(color: bool, verbose: bool, packages: seq[PackageInstallFormat]) =
+  if verbose:
+    printPackagesVerbose(color, packages)
+  else:
+    printPackagesRegular(color, false, packages)
 
 proc printComments*(color: bool, maintainer: Option[string],
   comments: seq[CommentFormat]) =
@@ -188,12 +216,6 @@ proc printComments*(color: bool, maintainer: Option[string],
       ^Color.bold & comment.date & ^Color.normal)
     echo(comment.text.replace("\n\n", "\n"))
     echo()
-
-proc printError*(color: bool, s: string) =
-  stderr.writeLine(^Color.red, trp"error: ", ^Color.normal, s)
-
-proc printWarning*(color: bool, s: string) =
-  stderr.writeLine(^Color.yellow, trp"warning: ", ^Color.normal, s)
 
 proc printColon*(color: bool, s: string) =
   echo(^Color.blue, ":: ", ^Color.bold, s, ^Color.normal)
