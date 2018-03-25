@@ -100,6 +100,9 @@ proc optional*(pkg: ptr AlpmPackage): ptr AlpmList[ptr AlpmDependency]
 proc provides*(pkg: ptr AlpmPackage): ptr AlpmList[ptr AlpmDependency]
   {.cdecl, importc: "alpm_pkg_get_provides".}
 
+proc replaces*(pkg: ptr AlpmPackage): ptr AlpmList[ptr AlpmDependency]
+  {.cdecl, importc: "alpm_pkg_get_replaces".}
+
 proc cfree*(data: pointer)
   {.cdecl, importc: "free", header: "<stdlib.h>".}
 

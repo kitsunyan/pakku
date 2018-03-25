@@ -8,8 +8,7 @@ type
   Installed = tuple[
     name: string,
     version: string,
-    groups: seq[string],
-    foreign: bool
+    groups: seq[string]
   ]
 
   SatisfyResult = tuple[
@@ -844,33 +843,51 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
 
   let targets = args.packageTargets
 
-  let (syncTargets, checkAur, installed) = withAlpm(config.root, config.db,
+  let (syncTargets, checkAur, installed, foreignUpgrade) = withAlpm(config.root, config.db,
     config.dbs, config.arch, handle, dbs, errors):
     for e in errors: printError(config.color, e)
 
     let (syncTargets, checkAur) = findSyncTargets(handle, dbs, targets,
       not build, not build)
 
-    let installed = lc[($p.name, $p.version, p.groupsSeq,
-      dbs.filter(d => d[p.name] != nil).len == 0) |
+    let installed = lc[($p.name, $p.version, p.groupsSeq) |
       (p <- handle.local.packages), Installed]
 
-    (syncTargets, checkAur, installed)
+    let foreignUpgrade = if upgradeCount > 0: (block:
+        proc checkForeignAndIrreplaceable(name: string): bool =
+          if dbs.filter(d => d[name] != nil).len > 0:
+            return false
+          else:
+            for db in dbs:
+              for pkg in db.packages:
+                for replaces in pkg.replaces:
+                  if replaces.name == name:
+                    return false
+            return true
 
-  let realCheckAur = if noaur:
+        installed
+          .map(i => i.name)
+          .filter(checkForeignAndIrreplaceable)
+          .toSet)
+      else:
+        initSet[string]()
+
+    (syncTargets, checkAur, installed, foreignUpgrade)
+
+  let checkAurFull = if noaur:
       @[]
     elif upgradeCount > 0:
       installed
-        .filter(i => i.foreign and
+        .filter(i => i.name in foreignUpgrade and
           (config.checkIgnored or not config.ignored(i.name, i.groups)))
         .map(i => i.name) & checkAur
     else:
       checkAur
 
   withAur():
-    if realCheckAur.len > 0 and printFormat.isNone:
+    if checkAurFull.len > 0 and printFormat.isNone:
       printColon(config.color, tr"Checking AUR database...")
-    let (rpcInfos, rerrors) = getRpcPackageInfo(realCheckAur)
+    let (rpcInfos, rerrors) = getRpcPackageInfo(checkAurFull)
     for e in rerrors: printError(config.color, e)
 
     let (rpcInfoTable, rpcNotFoundTargets) = filterNotFoundSyncTargets(syncTargets, rpcInfos)
@@ -881,7 +898,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
     else:
       if upgradeCount > 0 and not noaur and printFormat.isNone and config.printAurNotFound:
         for inst in installed:
-          if inst.foreign and not config.ignored(inst.name, inst.groups) and
+          if inst.name in foreignUpgrade and not config.ignored(inst.name, inst.groups) and
             not rpcInfoTable.hasKey(inst.name):
             printWarning(config.color, tr"$# was not found in AUR" % [inst.name])
 
