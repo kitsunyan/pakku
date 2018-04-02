@@ -222,10 +222,13 @@ proc printColon*(color: bool, s: string) =
 
 proc printColonUserInput*(color: bool, s: string,
   noconfirm: bool, default: string, cancel: string): string =
-  stdout.write(^Color.blue, ":: ", ^Color.bold, s, ^Color.normal, " ")
-  stdout.flushFile()
+  # pacman writes questions to stderr unless noconfirm specified
+  let stream = if noconfirm: stdout else: stderr
+  stream.write(^Color.blue, ":: ", ^Color.bold, s, ^Color.normal, " ")
+  stream.flushFile()
   if noconfirm:
-    echo()
+    stream.write("\n")
+    stream.flushFile()
     default
   else:
     try:
