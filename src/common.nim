@@ -143,6 +143,65 @@ proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
       FullPackageTarget[T](name: target.name, repo: target.repo,
         foundInfo: target.foundInfo, pkgInfo: none(T)))
 
+proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptional: bool,
+  assumeExplicit: seq[string]): (HashSet[string], HashSet[string], HashSet[string]) =
+  let (explicit, dependsTable, alternatives) = block:
+    var explicit = newSeq[string]()
+    var dependsTable = initTable[string,
+      HashSet[tuple[reference: PackageReference, optional: bool]]]()
+    var alternatives = initTable[string, HashSet[PackageReference]]()
+
+    for pkg in handle.local.packages:
+      proc fixProvides(reference: PackageReference): PackageReference =
+        if reference.constraint.isNone:
+          (reference.name, reference.description,
+            some((ConstraintOperation.eq, $pkg.version)))
+        else:
+          reference
+
+      let depends = toSeq(pkg.depends.items)
+        .map(d => d.toPackageReference).toSet
+      let optional = toSeq(pkg.optional.items)
+        .map(d => d.toPackageReference).toSet
+      let provides = toSeq(pkg.provides.items)
+        .map(d => d.toPackageReference).map(fixProvides).toSet
+
+      if pkg.reason == AlpmReason.explicit:
+        explicit &= $pkg.name
+      dependsTable.add($pkg.name,
+        depends.map(x => (x, false)) + optional.map(x => (x, true)))
+      if provides.len > 0:
+        alternatives.add($pkg.name, provides)
+
+    (explicit.toSet + assumeExplicit.toSet, dependsTable, alternatives)
+
+  let providedBy = lc[(y, x.key) | (x <- alternatives.namedPairs, y <- x.value),
+    tuple[reference: PackageReference, name: string]]
+
+  proc findRequired(withOptional: bool, results: HashSet[string],
+    check: HashSet[string]): HashSet[string] =
+    let full = results + check
+
+    let direct = lc[x.reference | (y <- dependsTable.namedPairs, y.key in check,
+      x <- y.value, withOptional or not x.optional), PackageReference]
+
+    let indirect = lc[x.name | (y <- direct, x <- providedBy,
+      y.isProvidedBy(x.reference)), string].toSet
+
+    let checkNext = (direct.map(p => p.name).toSet + indirect) - full
+    if checkNext.len > 0: findRequired(withOptional, full, checkNext) else: full
+
+  let installed = toSeq(dependsTable.keys).toSet
+
+  proc findOrphans(withOptional: bool): HashSet[string] =
+    let required = findRequired(withOptional, initSet[string](), explicit)
+    installed - required
+
+  let withOptionalSet = if withOptional: findOrphans(true) else: initSet[string]()
+  let withoutOptionalSet = if withoutOptional: findOrphans(false) else: initSet[string]()
+
+  (installed, withOptionalSet, withoutOptionalSet)
+
 proc formatArgument*(target: PackageTarget): string =
   target.repo.map(r => r & "/" & target.name).get(target.name)
 

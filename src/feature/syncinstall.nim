@@ -494,11 +494,13 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
-  directPacmanTargets: seq[string], additionalPacmanTargets: seq[string],
-  basePackages: seq[seq[seq[PackageInfo]]]): int =
-  let (directCode, directSome) = if directPacmanTargets.len > 0 or upgradeCount > 0:
+  targetNames: seq[string], build: bool, directPacmanTargets: seq[string],
+  additionalPacmanTargets: seq[string], basePackages: seq[seq[seq[PackageInfo]]]): int =
+  let workDirectPacmanTargets = if build: @[] else: directPacmanTargets
+
+  let (directCode, directSome) = if workDirectPacmanTargets.len > 0 or upgradeCount > 0:
       (pacmanRun(true, config.color, args.filter(arg => not arg.isTarget) &
-        directPacmanTargets.map(t => (t, none(string), ArgumentType.target))), true)
+        workDirectPacmanTargets.map(t => (t, none(string), ArgumentType.target))), true)
     else:
       (0, false)
 
@@ -652,6 +654,10 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
       removeTmp()
       confirmAndCloneCode
     else:
+      let (_, initialUnrequired, initialUnrequiredWithoutOptional) = withAlpm(config.root,
+        config.db, newSeq[string](), config.arch, handle, dbs, errors):
+        queryUnrequired(handle, true, true, targetNames)
+
       let (additionalCode, additionalSome) = if additionalPacmanTargets.len > 0: (block:
           printColon(config.color, tr"Installing build dependencies...")
 
@@ -702,7 +708,40 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
             if code != 0 and index < basePackages.len - 1:
               printWarning(config.color, tr"installation aborted")
             removeTmp()
-            code
+
+            let (_, finalUnrequired, finalUnrequiredWithoutOptional) = withAlpm(config.root,
+              config.db, newSeq[string](), config.arch, handle, dbs, errors):
+              queryUnrequired(handle, true, true, targetNames)
+
+            let unrequired = finalUnrequired - initialUnrequired
+            let unrequiredOptional = finalUnrequiredWithoutOptional -
+              initialUnrequiredWithoutOptional - unrequired
+
+            let removeCode = if unrequired.len > 0 or unrequiredOptional.len > 0: (block:
+                let code = if unrequired.len > 0: (block:
+                    printColon(config.color, tr"Removing build dependencies...")
+                    pacmanRun(true, config.color, commonArgs &
+                      ("R", none(string), ArgumentType.short) &
+                      toSeq(unrequired.items).map(t =>
+                        (t, none(string), ArgumentType.target))))
+                  else:
+                    0
+
+                if code == 0 and unrequiredOptional.len > 0:
+                  printColon(config.color, tr"Removing optional build dependencies...")
+                  pacmanRun(true, config.color, commonArgs &
+                    ("R", none(string), ArgumentType.short) &
+                    toSeq(unrequiredOptional.items).map(t =>
+                      (t, none(string), ArgumentType.target)))
+                else:
+                  code)
+              else:
+                0
+
+            if removeCode != 0:
+              removeCode
+            else:
+              code
         elif not directSome and not additionalSome:
           echo(trp(" there is nothing to do\n"))
           0
@@ -985,13 +1024,10 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
               satisfied, unsatisfied, directPacmanTargets, additionalPacmanTargets,
               orderedPkgInfos)
           else:
-            let explicits = if not args.check((none(string), "asdeps")):
-                targets.map(t => t.name)
-              else:
-                @[]
-
-            let passDirectPacmanTargets = if build: @[] else: directPacmanTargets
+            let targetNames = targets.map(t => t.name)
+            let explicits = if not args.check((none(string), "asdeps")): targetNames else: @[]
 
             handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
-              explicits.toSet, installed, satisfied, unsatisfied, passDirectPacmanTargets,
-              additionalPacmanTargets, orderedPkgInfos)
+              explicits.toSet, installed, satisfied, unsatisfied,
+              targetNames, build, directPacmanTargets, additionalPacmanTargets,
+              orderedPkgInfos)
