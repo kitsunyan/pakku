@@ -1,5 +1,5 @@
 import
-  future, options, sequtils, strutils, times, unicode,
+  future, options, posix, sequtils, strutils, times, unicode,
   utils
 
 type
@@ -51,6 +51,13 @@ proc getWindowSize(): tuple[width: int, height: int] =
     ((int) winSize.col, (int) winSize.row)
   else:
     (0, 0)
+
+proc tcflush(fd: cint, queueSelector: cint): cint
+  {.importc, header: "<termios.h>".}
+
+proc discardStream() =
+  if isatty(0) != 0:
+    discard tcflush(0, 0)
 
 proc printError*(color: bool, s: string) =
   stderr.writeLine(^Color.red, trp"error: ", ^Color.normal, s)
@@ -232,6 +239,7 @@ proc printColonUserInput*(color: bool, s: string,
     default
   else:
     try:
+      discardStream()
       stdin.readLine()
     except EOFError:
       cancel
