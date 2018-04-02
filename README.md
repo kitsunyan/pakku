@@ -12,6 +12,7 @@ Basically, pakku supports the following features:
 
 - Installing packages from AUR
 - Building packages from official repositories
+- Removing make dependencies after building
 - Searching and querying AUR packages
 - Reading comments for AUR packages
 - Pacman integration
