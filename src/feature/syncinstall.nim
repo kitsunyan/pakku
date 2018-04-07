@@ -449,7 +449,8 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       loop(false, false)
 
 proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
-  basePackages: seq[seq[PackageInfo]], explicits: HashSet[string], noconfirm: bool): int =
+  basePackages: seq[seq[PackageInfo]], explicits: HashSet[string],
+  noconfirm: bool): (seq[(string, string)], int) =
   proc buildNext(index: int, buildResults: seq[BuildResult]): (seq[BuildResult], int) =
     if index < basePackages.len:
       let (buildResult, code) = buildFromSources(config, commonArgs,
@@ -488,7 +489,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 
   if buildCode != 0:
     handleTmpRoot(true)
-    buildCode
+    (newSeq[(string, string)](), buildCode)
   else:
     let res = printColonUserChoice(config.color,
       tr"Continue installing?", ['y', 'n'], 'y', 'n',
@@ -496,10 +497,11 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 
     if res != 'y':
       handleTmpRoot(false)
-      1
+      (newSeq[(string, string)](), 1)
     else:
       let asdeps = install.filter(p => not (p.name in explicits)).map(p => p.file)
-      let asexplicit = install.filter(p => p.name in explicits).map(p => p.file)
+      let explicitPkgs = install.filter(p => p.name in explicits)
+      let asexplicit = explicitPkgs.map(p => p.file)
 
       proc doInstall(files: seq[string], addArgs: seq[Argument]): int =
         if files.len > 0:
@@ -512,15 +514,17 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       let asdepsCode = doInstall(asdeps, @[("asdeps", none(string), ArgumentType.long)])
       if asdepsCode != 0:
         handleTmpRoot(false)
-        asdepsCode
+        (newSeq[(string, string)](), asdepsCode)
       else:
         let asexplicitCode = doInstall(asexplicit, @[])
         if asexplicitCode != 0:
           handleTmpRoot(false)
-          asexplicitCode
+          (newSeq[(string, string)](), asexplicitCode)
         else:
           handleTmpRoot(true)
-          0
+          let installedAs = lc[(r.name.unsafeGet, r.pkgInfo.name) | (br <- buildResults,
+            r <- br.replacePkgInfos, r.name.isSome), (string, string)]
+          (installedAs, 0)
 
 proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
@@ -727,22 +731,24 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
             printUnsatisfied(config, satisfied, unsatisfied)
             1
           else:
-            proc installNext(index: int, lastCode: int): (int, int) =
+            proc installNext(index: int, installedAs: seq[(string, string)],
+              lastCode: int): (Table[string, string], int, int) =
               if index < basePackages.len and lastCode == 0:
-                let code = installGroupFromSources(config, commonArgs,
+                let (addInstalledAs, code) = installGroupFromSources(config, commonArgs,
                   basePackages[index], explicits, noconfirm)
-                installNext(index + 1, code)
+                installNext(index + 1, installedAs & addInstalledAs, code)
               else:
-                (lastCode, index - 1)
+                (installedAs.toTable, lastCode, index - 1)
 
-            let (code, index) = installNext(0, 0)
+            let (installedAs, code, index) = installNext(0, @[], 0)
             if code != 0 and index < basePackages.len - 1:
               printWarning(config.color, tr"installation aborted")
             removeTmp()
 
+            let newTargetNames = targetNames.map(n => installedAs.opt(n).get(n))
             let (_, finalUnrequired, finalUnrequiredWithoutOptional) = withAlpm(config.root,
               config.db, newSeq[string](), config.arch, handle, dbs, errors):
-              queryUnrequired(handle, true, true, targetNames)
+              queryUnrequired(handle, true, true, newTargetNames)
 
             let unrequired = finalUnrequired - initialUnrequired
             let unrequiredOptional = finalUnrequiredWithoutOptional -
