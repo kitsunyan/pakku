@@ -375,6 +375,8 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =
   let base = pkgInfos[0].base
+  let repoPath = repoPath(config.tmpRoot, base)
+  let gitPath = pkgInfos[0].gitPath
   let (cloneCode, cloneErrorMessage) = cloneRepo(config, pkgInfos)
 
   if cloneCode != 0:
@@ -384,8 +386,7 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
   else:
     proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
       let res = if showEditLoop:
-          editLoop(config, base, repoPath(config.tmpRoot, base), pkgInfos[0].gitPath,
-            false, noconfirm)
+          editLoop(config, base, repoPath, gitPath, false, noconfirm)
         else:
           'n'
 
@@ -416,7 +417,26 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
         else:
           (buildResult, code)
 
-    loop(false, false)
+    let preBuildCode = if config.preBuildCommand.isSome: (block:
+        printColon(config.color, tr"Running pre-build command...")
+
+        let code = forkWait(() => (block:
+          discard chdir(buildPath(repoPath, gitPath))
+          execResult(bashCmd, "-c", config.preBuildCommand.unsafeGet)))
+
+        if code != 0 and printColonUserChoice(config.color,
+          tr"Command failed, continue?", ['y', 'n'], 'n', 'n',
+          noconfirm, 'n') == 'y':
+          0
+        else:
+          code)
+      else:
+        0
+
+    if preBuildCode != 0:
+      (none(BuildResult), preBuildCode)
+    else:
+      loop(false, false)
 
 proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   basePackages: seq[seq[PackageInfo]], explicits: HashSet[string], noconfirm: bool): int =

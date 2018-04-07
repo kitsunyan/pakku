@@ -33,6 +33,7 @@ type
     checkIgnored*: bool
     printAurNotFound*: bool
     viewNoDefault*: bool
+    preBuildCommand*: Option[string]
 
 proc readConfigFile*(configFile: string):
   (OrderedTable[string, ref Table[string, string]], bool) =
@@ -118,10 +119,11 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let checkIgnored = options.hasKey("CheckIgnored")
   let printAurNotFound = options.hasKey("PrintAurNotFound")
   let viewNoDefault = options.hasKey("ViewNoDefault")
+  let preBuildCommand = options.opt("PreBuildCommand")
 
   Config(root: root, db: db, tmpRoot: tmpRoot, color: color,
     dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
     ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
-    aurComments: aurComments, checkIgnored: checkIgnored,
-    printAurNotFound: printAurNotFound, viewNoDefault: viewNoDefault)
+    aurComments: aurComments, checkIgnored: checkIgnored, printAurNotFound: printAurNotFound,
+    viewNoDefault: viewNoDefault, preBuildCommand: preBuildCommand)
