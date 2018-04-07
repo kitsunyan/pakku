@@ -17,9 +17,14 @@ type
     buildPkgInfo: Option[PackageInfo]
   ]
 
+  ReplacePkgInfo = tuple[
+    name: Option[string],
+    pkgInfo: PackageInfo
+  ]
+
   BuildResult = tuple[
     ext: string,
-    pkgInfos: Table[string, PackageInfo]
+    replacePkgInfos: seq[ReplacePkgInfo]
   ]
 
 proc groupsSeq(pkg: ptr AlpmPackage): seq[string] =
@@ -369,8 +374,13 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
           printError(config.color, tr"$#: failed to extract package info" % [name])
         (none(BuildResult), 1)
       else:
-        let table = resultByIndices.map(i => (i.name, i.pkgInfo.get)).toTable
-        (some(($confExt, table)), 0)
+        let targetPkgInfos: seq[ReplacePkgInfo] = resultByIndices
+          .map(i => (some(i.name), i.pkgInfo.get))
+        let filterNames = targetPkgInfos.map(r => r.pkgInfo.name).toSet
+        let additionalPkgInfos: seq[ReplacePkgInfo] = resultPkgInfos
+          .filter(i => not (i.name in filterNames))
+          .map(i => (none(string), i))
+        (some(($confExt, targetPkgInfos & additionalPkgInfos)), 0)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =
@@ -458,17 +468,18 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
     let arch = if config.arch in pkgInfo.archs: config.arch else: "any"
     config.tmpRoot & "/" & pkgInfo.name & "-" & pkgInfo.version & "-" & arch & ext
 
-  let files = lc[(p.key, formatArchiveFile(p.value, br.ext)) |
-    (br <- buildResults, p <- br.pkgInfos.namedPairs), (string, string)].toTable
-  let install = lc[(i.name, x) | (g <- basePackages, i <- g, x <- files.opt(i.name)),
+  let allFiles = lc[(r.name, formatArchiveFile(r.pkgInfo, br.ext)) |
+    (br <- buildResults, r <- br.replacePkgInfos), tuple[name: Option[string], file: string]]
+  let filesTable = allFiles.filter(f => f.name.isSome).map(f => (f.name.unsafeGet, f.file)).toTable
+  let install = lc[(i.name, x) | (g <- basePackages, i <- g, x <- filesTable.opt(i.name)),
     tuple[name: string, file: string]]
 
   proc handleTmpRoot(clear: bool) =
-    let files = install.map(p => p.file)
-    for _, file in files:
-      if clear or not (file in files):
+    let installFiles = install.map(p => p.file)
+    for pair in allFiles:
+      if clear or not (pair.file in installFiles):
         try:
-          removeFile(file)
+          removeFile(pair.file)
         except:
           discard
 
