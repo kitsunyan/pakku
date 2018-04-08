@@ -207,7 +207,9 @@ proc formatArgument*(target: PackageTarget): string =
 
 proc ensureTmpOrError*(config: Config): Option[string] =
   let tmpRootExists = try:
+    let user = initialUser.get(currentUser)
     discard config.tmpRoot.existsOrCreateDir()
+    discard chown(config.tmpRoot, (Uid) user.uid, (Gid) user.gid)
     true
   except:
     false
@@ -226,15 +228,22 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
         discard close(1)
         discard close(2)
 
+      dropPrivileges()
       execResult(args)))
 
   let (workFirstCommit, checkFirst) = if firstCommit.isSome:
       (firstCommit, false)
     else:
-      (runProgram(gitCmd, "-C", repoPath,
-        "rev-list", "--max-parents=0", "@").optLast, true)
-  let realLastThreeCommits = runProgram(gitCmd, "-C", repoPath,
-    "rev-list", "--max-count=3", "@")
+      (forkWaitRedirect(() => (block:
+        dropPrivileges()
+        execResult(gitCmd, "-C", repoPath,
+          "rev-list", "--max-parents=0", "@")))
+        .output.optLast, true)
+
+  let (realLastThreeCommits, _) = forkWaitRedirect(() => (block:
+    dropPrivileges()
+    execResult(gitCmd, "-C", repoPath,
+      "rev-list", "--max-count=3", "@")))
   let index = workFirstCommit.map(c => realLastThreeCommits.find(c)).get(-1)
   let lastThreeCommits = if index >= 0:
       realLastThreeCommits[0 .. index]
@@ -248,8 +257,12 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
     if checkout1Code != 0:
       none(string)
     else:
-      let foundVersion = runProgram(pkgLibDir & "/bisect",
-        compareMethod, repoPath & "/" & relativePath, version).optFirst
+      let foundVersion = forkWaitRedirect(() => (block:
+        dropPrivileges()
+        execResult(pkgLibDir & "/bisect",
+          compareMethod, repoPath & "/" & relativePath, version)))
+        .output.optFirst
+
       let checkout2Code = forkExecWithoutOutput(gitCmd, "-C", repoPath,
         "checkout", lastThreeCommits[0])
 
@@ -286,8 +299,11 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       discard forkExecWithoutOutput(gitCmd, "-C", repoPath,
         "bisect", "run", pkgLibDir & "/bisect", compareMethod, relativePath, version)
 
-      let commit = runProgram(gitCmd, "-C", repoPath,
-        "rev-list", "--max-count=1", "refs/bisect/bad").optFirst
+      let commit = forkWaitRedirect(() => (block:
+        dropPrivileges()
+        execResult(gitCmd, "-C", repoPath,
+          "rev-list", "--max-count=1", "refs/bisect/bad")))
+        .output.optFirst
 
       discard forkExecWithoutOutput(gitCmd, "-C", repoPath,
         "bisect", "reset")
@@ -305,8 +321,15 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
         none(string)
 
 proc obtainSrcInfo*(path: string): string =
-  execProcess(bashCmd, ["-c", """cd "$2" && "$1" --printsrcinfo""",
-    "bash", makePkgCmd, path], options = {})
+  let (output, code) = forkWaitRedirect(() => (block:
+    discard chdir(path)
+    dropPrivileges()
+    execResult(makePkgCmd, "--printsrcinfo")))
+
+  if code == 0:
+    output.foldl(a & b & "\n", "")
+  else:
+    ""
 
 proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): seq[PackageInfo] =
   let srcInfo = obtainSrcInfo(path)
@@ -337,17 +360,22 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
         removeDirQuiet(repoPath)
 
         try:
-          if forkWait(() => execResult(gitCmd, "-C", config.tmpRoot,
-            "clone", "-q", git.url, "-b", git.branch,
-            "--single-branch", base)) == 0:
+          if forkWait(() => (block:
+            dropPrivileges()
+            execResult(gitCmd, "-C", config.tmpRoot,
+              "clone", "-q", git.url, "-b", git.branch,
+              "--single-branch", base))) == 0:
             let commit = bisectVersion(repoPath, config.debug, none(string),
               "source", git.path, version)
 
             if commit.isNone:
               @[]
             else:
-              discard forkWait(() => execResult(gitCmd, "-C", repoPath,
-                "checkout", "-q", commit.unsafeGet))
+              discard forkWait(() => (block:
+                dropPrivileges()
+                execResult(gitCmd, "-C", repoPath,
+                  "checkout", "-q", commit.unsafeGet)))
+
               let srcInfo = obtainSrcInfo(repoPath & "/" & git.path)
               parseSrcInfo(repo, srcInfo, config.arch,
                 git.url, some(git.branch), commit, some(git.path))
@@ -399,13 +427,17 @@ proc cloneRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[st
     let aur = basePackages[0].repo == "aur"
     let branch = gitBranch.get("master")
 
-    let cloneCode = forkWait(() => execResult(gitCmd, "-C", config.tmpRoot,
-        "clone", "-q", gitUrl, "-b", branch, "--single-branch", base))
+    let cloneCode = forkWait(() => (block:
+      dropPrivileges()
+      execResult(gitCmd, "-C", config.tmpRoot,
+        "clone", "-q", gitUrl, "-b", branch, "--single-branch", base)))
 
     if cloneCode == 0:
       if gitCommit.isSome:
-        let code = forkWait(() => execResult(gitCmd, "-C", repoPath,
-          "reset", "-q", "--hard", gitCommit.unsafeGet))
+        let code = forkWait(() => (block:
+          dropPrivileges()
+          execResult(gitCmd, "-C", repoPath,
+            "reset", "-q", "--hard", gitCommit.unsafeGet)))
         (code, none(string))
       elif aur:
         (0, none(string))

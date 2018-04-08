@@ -87,12 +87,12 @@ proc handleSync(args: seq[Argument], config: Config): int =
     let isNonDefaultRoot = not config.isRootDefault
     let isDowngrade = args.count((some("u"), "sysupgrade")) >= 2
     let isSkipDeps = args.check((some("d"), "nodeps"))
-    let isRoot = getuid() == 0
+    let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
     let build = args.check((none(string), "build"))
     let noaur = args.check((none(string), "noaur"))
 
-    let noBuild = isNonDefaultRoot or isDowngrade or isSkipDeps or isRoot
+    let noBuild = isNonDefaultRoot or isDowngrade or isSkipDeps or isRootNoDrop
 
     if build and noBuild:
       if isNonDefaultRoot:
@@ -104,7 +104,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
       elif isSkipDeps:
         printError(config.color, tr"dependency check is skipped" & " -- " &
           tr"building is not allowed")
-      elif isRoot:
+      elif isRootNoDrop:
         printError(config.color, tr"running as root" & " -- " &
           tr"building is not allowed")
       1
@@ -121,7 +121,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
         elif isSkipDeps:
           printWarning(config.color, tr"dependency check is skipped" & " -- " &
             tr"'$#' is assumed" % ["--noaur"])
-        elif isRoot:
+        elif isRootNoDrop:
           printWarning(config.color, tr"running as root" & " -- " &
             tr"'$#' is assumed" % ["--noaur"])
 
@@ -171,7 +171,7 @@ proc handleHelp(operation: OperationType) =
     .map(o => @["-" & o.pair.short.get])
     .optFirst.get(@[]) & @["-h"]
 
-  let lines = runProgram(pacmanCmd & operationArgs)
+  let (lines, _) = forkWaitRedirect(() => execResult(pacmanCmd & operationArgs))
 
   for line in lines:
     echo(line.replace(re"\bpacman\b", "pakku"))

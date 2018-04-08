@@ -111,10 +111,10 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let db = config.db
   let color = config.colorMode.get
 
-  let (userId, userName) = getUser()
+  let user = initialUser.get(currentUser)
   let tmpRoot = options.opt("TmpDir").get("/tmp/pakku-${USER}")
-    .replace("${UID}", $userId)
-    .replace("${USER}", userName)
+    .replace("${UID}", $user.uid)
+    .replace("${USER}", user.name)
   let aurComments = options.hasKey("AurComments")
   let checkIgnored = options.hasKey("CheckIgnored")
   let printAurNotFound = options.hasKey("PrintAurNotFound")

@@ -352,7 +352,10 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let ignorePkgs = getAll((none(string), "ignore")).toSet
   let ignoreGroups = getAll((none(string), "ignoregroups")).toSet
 
-  let hasKeyserver = runProgram(gpgConfCmd, "--list-options", "gpg")
+  let hasKeyserver = forkWaitRedirect(() => (block:
+    dropPrivileges()
+    execResult(gpgConfCmd, "--list-options", "gpg")))
+    .output
     .filter(s => s.len > 10 and s[0 .. 9] == "keyserver:" and not (s[^2] == ':'))
     .len > 0
 

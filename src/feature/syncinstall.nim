@@ -260,16 +260,24 @@ proc editLoop(config: Config, base: string, repoPath: string, gitPath: Option[st
       else:
         discard forkWait(proc: int =
           discard chdir(buildPath(repoPath, gitPath))
+          dropPrivileges()
           execResult(bashCmd, "-c", """$1 "$2"""", "bash", editor, file))
         editFileLoop(file)
     else:
       res
 
   let rawFiles = if gitPath.isSome:
-      runProgram(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
-        gitPath.unsafeGet & "/").map(s => s[gitPath.unsafeGet.len + 1 .. ^1])
+      forkWaitRedirect(() => (block:
+        dropPrivileges()
+        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
+          gitPath.unsafeGet & "/")))
+        .output
+        .map(s => s[gitPath.unsafeGet.len + 1 .. ^1])
     else:
-      runProgram(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")
+      forkWaitRedirect(() => (block:
+        dropPrivileges()
+        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")))
+        .output
 
   let files = ("PKGBUILD" & rawFiles.filter(x => x != ".SRCINFO")).deduplicate
 
@@ -321,15 +329,19 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
   else:
     let envExt = getenv("PKGEXT")
     let confExt = if envExt == nil or envExt.len == 0:
-        runProgram(bashCmd, "-c",
-          "source \"$@\" && echo \"$PKGEXT\"",
-          "bash", workConfFile).optFirst.get("")
+        forkWaitRedirect(() => (block:
+          dropPrivileges()
+          execResult(bashCmd, "-c",
+            "source \"$@\" && echo \"$PKGEXT\"",
+            "bash", workConfFile)))
+          .output.optFirst.get("")
       else:
         $envExt
 
     let buildCode = forkWait(proc: int =
       if chdir(buildPath) == 0:
         discard unsetenv("MAKEPKG_CONF")
+        dropPrivileges()
 
         if not noextract:
           removeDirQuiet(buildPath & "src")
@@ -432,6 +444,7 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
 
         let code = forkWait(() => (block:
           discard chdir(buildPath(repoPath, gitPath))
+          dropPrivileges()
           execResult(bashCmd, "-c", config.preBuildCommand.unsafeGet)))
 
         if code != 0 and printColonUserChoice(config.color,
@@ -491,11 +504,9 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
     handleTmpRoot(true)
     (newSeq[(string, string)](), buildCode)
   else:
-    let res = printColonUserChoice(config.color,
+    if currentUser.uid != 0 and printColonUserChoice(config.color,
       tr"Continue installing?", ['y', 'n'], 'y', 'n',
-      noconfirm, 'y')
-
-    if res != 'y':
+      noconfirm, 'y') != 'y':
       handleTmpRoot(false)
       (newSeq[(string, string)](), 1)
     else:
@@ -632,6 +643,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                       discard open("/dev/null")
                       discard close(2)
                       discard open("/dev/null")
+                      dropPrivileges()
                       execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
                       keysLoop(index + 1, skipKeys)
                     else:
@@ -649,13 +661,15 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                           ('a', tr"abort operation"))
                         keysLoop(index, newSkipKeys)
                       elif res == 'y' or newSkipKeys:
-                        let importCode = if config.pgpKeyserver.isSome:
+                        let importCode = forkWait(() => (block:
+                          dropPrivileges()
+                          if config.pgpKeyserver.isSome:
                             forkWait(() => execResult(gpgCmd,
                               "--keyserver", config.pgpKeyserver.unsafeGet,
                               "--recv-keys", pgpKeys[index]))
                           else:
                             forkWait(() => execResult(gpgCmd,
-                              "--recv-keys", pgpKeys[index]))
+                              "--recv-keys", pgpKeys[index]))))
 
                         if importCode == 0 or newSkipKeys or noconfirm:
                           keysLoop(index + 1, newSkipKeys)
