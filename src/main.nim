@@ -84,51 +84,56 @@ proc handleSync(args: seq[Argument], config: Config): int =
     handleSyncSearch(args, config)
   elif syncArgs.checkOpGroup(OpGroup.syncInstall) and
     (args.check((some("u"), "sysupgrade")) or args.targets.len > 0):
-    let isNonDefaultRoot = not config.isRootDefault
-    let isDowngrade = args.count((some("u"), "sysupgrade")) >= 2
-    let isSkipDeps = args.check((some("d"), "nodeps"))
-    let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
-
-    let build = args.check((none(string), "build"))
-    let noaur = args.check((none(string), "noaur"))
-
-    let noBuild = isNonDefaultRoot or isDowngrade or isSkipDeps or isRootNoDrop
-
-    if build and noBuild:
-      if isNonDefaultRoot:
-        printError(config.color, tr"non-default root path is specified" & " -- " &
-          tr"building is not allowed")
-      elif isDowngrade:
-        printError(config.color, tr"downgrades are enabled" & " -- " &
-          tr"building is not allowed")
-      elif isSkipDeps:
-        printError(config.color, tr"dependency check is skipped" & " -- " &
-          tr"building is not allowed")
-      elif isRootNoDrop:
-        printError(config.color, tr"running as root" & " -- " &
-          tr"building is not allowed")
-      1
+    if currentUser.uid != 0 and config.sudoExec:
+      let collectedArgs = @[sudoCmd, getAppFilename()] &
+        lc[x | (y <- args, x <- y.collectArg), string]
+      execResult(collectedArgs)
     else:
-      let noaurAdd = noBuild and not noaur
+      let isNonDefaultRoot = not config.isRootDefault
+      let isDowngrade = args.count((some("u"), "sysupgrade")) >= 2
+      let isSkipDeps = args.check((some("d"), "nodeps"))
+      let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
-      if noaurAdd:
+      let build = args.check((none(string), "build"))
+      let noaur = args.check((none(string), "noaur"))
+
+      let noBuild = isNonDefaultRoot or isDowngrade or isSkipDeps or isRootNoDrop
+
+      if build and noBuild:
         if isNonDefaultRoot:
-          printWarning(config.color, tr"non-default root path is specified" & " -- " &
-            tr"'$#' is assumed" % ["--noaur"])
+          printError(config.color, tr"non-default root path is specified" & " -- " &
+            tr"building is not allowed")
         elif isDowngrade:
-          printWarning(config.color, tr"downgrades are enabled" & " -- " &
-            tr"'$#' is assumed" % ["--noaur"])
+          printError(config.color, tr"downgrades are enabled" & " -- " &
+            tr"building is not allowed")
         elif isSkipDeps:
-          printWarning(config.color, tr"dependency check is skipped" & " -- " &
-            tr"'$#' is assumed" % ["--noaur"])
+          printError(config.color, tr"dependency check is skipped" & " -- " &
+            tr"building is not allowed")
         elif isRootNoDrop:
-          printWarning(config.color, tr"running as root" & " -- " &
-            tr"'$#' is assumed" % ["--noaur"])
-
-      if noaurAdd:
-        handleSyncInstall(args & ("noaur", none(string), ArgumentType.long), config)
+          printError(config.color, tr"running as root" & " -- " &
+            tr"building is not allowed")
+        1
       else:
-        handleSyncInstall(args, config)
+        let noaurAdd = noBuild and not noaur
+
+        if noaurAdd:
+          if isNonDefaultRoot:
+            printWarning(config.color, tr"non-default root path is specified" & " -- " &
+              tr"'$#' is assumed" % ["--noaur"])
+          elif isDowngrade:
+            printWarning(config.color, tr"downgrades are enabled" & " -- " &
+              tr"'$#' is assumed" % ["--noaur"])
+          elif isSkipDeps:
+            printWarning(config.color, tr"dependency check is skipped" & " -- " &
+              tr"'$#' is assumed" % ["--noaur"])
+          elif isRootNoDrop:
+            printWarning(config.color, tr"running as root" & " -- " &
+              tr"'$#' is assumed" % ["--noaur"])
+
+        if noaurAdd:
+          handleSyncInstall(args & ("noaur", none(string), ArgumentType.long), config)
+        else:
+          handleSyncInstall(args, config)
   else:
     let nonRootArgs = [
       (some("p"), "print"),

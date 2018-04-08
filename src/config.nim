@@ -32,6 +32,7 @@ type
     aurComments*: bool
     checkIgnored*: bool
     printAurNotFound*: bool
+    sudoExec*: bool
     viewNoDefault*: bool
     preBuildCommand*: Option[string]
 
@@ -118,6 +119,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let aurComments = options.hasKey("AurComments")
   let checkIgnored = options.hasKey("CheckIgnored")
   let printAurNotFound = options.hasKey("PrintAurNotFound")
+  let sudoExec = options.hasKey("SudoExec")
   let viewNoDefault = options.hasKey("ViewNoDefault")
   let preBuildCommand = options.opt("PreBuildCommand")
 
@@ -126,4 +128,4 @@ proc obtainConfig*(config: PacmanConfig): Config =
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
     ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
     aurComments: aurComments, checkIgnored: checkIgnored, printAurNotFound: printAurNotFound,
-    viewNoDefault: viewNoDefault, preBuildCommand: preBuildCommand)
+    sudoExec: sudoExec, viewNoDefault: viewNoDefault, preBuildCommand: preBuildCommand)

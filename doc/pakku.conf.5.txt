@@ -31,6 +31,10 @@ Options
 	Print warnings during upgrade operation when foreign packages were not
 	found in AUR.
 
+*SudoExec*::
+	Automatically exec the program from root via sudo if it is necessary,
+	allowing you to enter password for sudo only once.
+
 *ViewNoDefault*::
 	When building from AUR, pakku will ask whether you want to view the
 	content of PKGBUILD and other files. Pressing enter key will give the
