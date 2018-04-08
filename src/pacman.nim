@@ -376,6 +376,8 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
                 pgpKeyserver = some(line[9 .. ^1].strip)
           except:
             discard
+          finally:
+            file.close()
         pgpKeyserver)
 
   let config = PacmanConfig(rootOption: root, dbOption: db, gpgOption: gpg,
