@@ -1,4 +1,4 @@
-VERSION = 0.5
+VERSION = 0.6
 COPYRIGHT = 2018 kitsunyan
 DIST_MODE = false
 
