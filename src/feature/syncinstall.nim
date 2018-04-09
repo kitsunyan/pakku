@@ -200,11 +200,12 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
   findDependencies(config, handle, dbs, satisfied, unsatisfied, @[], printMode, noaur)
 
 proc filterNotFoundSyncTargets[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
-  pkgInfos: seq[T]): (Table[string, T], seq[SyncPackageTarget]) =
+  pkgInfos: seq[T], upToDateNeededNames: HashSet[string]):
+  (Table[string, T], seq[SyncPackageTarget]) =
   let rpcInfoTable = pkgInfos.map(d => (d.name, d)).toTable
 
   proc notFoundOrFoundInAur(target: SyncPackageTarget): bool =
-    target.foundInfo.isNone and
+    not (target.name in upToDateNeededNames) and target.foundInfo.isNone and
       not (target.isAurTargetSync and rpcInfoTable.hasKey(target.name))
 
   # collect packages which were found neither in sync DB nor in AUR
@@ -887,28 +888,32 @@ proc checkNeeded(installed: Table[string, Installed], name: string, version: str
 proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   targets: seq[FullPackageTarget[RpcPackageInfo]],
   installed: Table[string, Installed], print: bool, needed: bool,
-  upgradeCount: int): (seq[PackageInfo], seq[string]) =
-  let targetRpcInfos: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
+  upgradeCount: int): (seq[PackageInfo], seq[Installed], seq[string]) =
+  let targetRpcInfoPairs: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
     targets.map(t => t.pkgInfo.get).map(i => (i, installed.checkNeeded(i.name, i.version)))
 
-  if not print and needed:
-    for pair in targetRpcInfos:
-      if not pair.upgradeable:
-        # not upgradeable assumes that package is installed
-        let inst = installed[pair.rpcInfo.name]
-        printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
-          [pair.rpcInfo.name, inst.version])
+  let upToDateNeeded: seq[Installed] = if needed:
+      targetRpcInfoPairs.map(pair => (block:
+        if not pair.upgradeable:
+          some(installed[pair.rpcInfo.name])
+        else:
+          none(Installed)))
+      .filter(i => i.isSome)
+      .map(i => i.unsafeGet)
+    else:
+      @[]
 
   let targetsSet = targets.map(t => t.name).toSet
-  let fullRpcInfos = (targetRpcInfos
+  let fullRpcInfos = (targetRpcInfoPairs
     .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo) &
     rpcInfos.filter(i => upgradeCount > 0 and not (i.name in targetsSet) and
       installed.checkNeeded(i.name, i.version))).deduplicate
 
   if fullRpcInfos.len > 0 and not print:
     echo(tr"downloading full package descriptions...")
-  getAurPackageInfo(fullRpcInfos.map(i => i.name),
+  let (pkgInfos, errors) = getAurPackageInfo(fullRpcInfos.map(i => i.name),
     some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)
+  (pkgInfos, upToDateNeeded, errors)
 
 proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
@@ -980,7 +985,8 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
     let (rpcInfos, rerrors) = getRpcPackageInfo(checkAurFull)
     for e in rerrors: printError(config.color, e)
 
-    let (rpcInfoTable, rpcNotFoundTargets) = filterNotFoundSyncTargets(syncTargets, rpcInfos)
+    let (rpcInfoTable, rpcNotFoundTargets) = filterNotFoundSyncTargets(syncTargets,
+      rpcInfos, initSet[string]())
 
     if rpcNotFoundTargets.len > 0:
       printSyncNotFound(config, rpcNotFoundTargets)
@@ -995,19 +1001,27 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       let installedTable = installed.map(i => (i.name, i)).toTable
       let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos).filter(isAurTargetFull)
 
-      let (aurPkgInfos, aperrors) = obtainAurPackageInfos(config, rpcInfos, rpcAurTargets,
-        installedTable, printFormat.isSome, needed, upgradeCount)
+      let (aurPkgInfos, upToDateNeeded, aperrors) = obtainAurPackageInfos(config,
+        rpcInfos, rpcAurTargets, installedTable, printFormat.isSome, needed, upgradeCount)
       for e in aperrors: printError(config.color, e)
 
-      let (_, notFoundTargets) = filterNotFoundSyncTargets(syncTargets, aurPkgInfos)
+      let upToDateNeededNames = upToDateNeeded.map(i => i.name).toSet
+      let (_, notFoundTargets) = filterNotFoundSyncTargets(syncTargets,
+        aurPkgInfos, upToDateNeededNames)
 
       if notFoundTargets.len > 0:
         printSyncNotFound(config, notFoundTargets)
         1
       else:
-        let fullTargets = mapAurTargets(syncTargets, aurPkgInfos)
+        let fullTargets = mapAurTargets(syncTargets
+          .filter(t => not (t.name in upToDateNeededNames)), aurPkgInfos)
         let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
         let aurTargets = fullTargets.filter(isAurTargetFull)
+
+        if printFormat.isNone:
+          for inst in upToDateNeeded:
+            printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
+              [inst.name, inst.version])
 
         let neededPacmanTargets = if printFormat.isNone and build and needed:
             pacmanTargets.filter(target => (block:
