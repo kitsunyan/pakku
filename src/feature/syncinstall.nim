@@ -17,6 +17,12 @@ type
     buildPkgInfo: Option[PackageInfo]
   ]
 
+  LocalIsNewer = tuple[
+    name: string,
+    version: string,
+    aurVersion: string
+  ]
+
   ReplacePkgInfo = tuple[
     name: Option[string],
     pkgInfo: PackageInfo
@@ -878,19 +884,21 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
 
   (nonConflicingPkgInfos, acceptedPkgInfos)
 
-proc checkNeeded(installed: Table[string, Installed], name: string, version: string): bool =
+proc checkNeeded(installed: Table[string, Installed],
+  name: string, version: string): tuple[needed: bool, vercmp: int] =
   if installed.hasKey(name):
     let i = installed[name]
-    vercmp(version, i.version) > 0
+    let vercmp = vercmp(version, i.version)
+    (vercmp > 0, vercmp.int)
   else:
-    true
+    (true, 0)
 
 proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   targets: seq[FullPackageTarget[RpcPackageInfo]],
   installed: Table[string, Installed], print: bool, needed: bool,
-  upgradeCount: int): (seq[PackageInfo], seq[Installed], seq[string]) =
+  upgradeCount: int): (seq[PackageInfo], seq[Installed], seq[LocalIsNewer], seq[string]) =
   let targetRpcInfoPairs: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
-    targets.map(t => t.pkgInfo.get).map(i => (i, installed.checkNeeded(i.name, i.version)))
+    targets.map(t => t.pkgInfo.get).map(i => (i, installed.checkNeeded(i.name, i.version).needed))
 
   let upToDateNeeded: seq[Installed] = if needed:
       targetRpcInfoPairs.map(pair => (block:
@@ -904,16 +912,38 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
       @[]
 
   let targetsSet = targets.map(t => t.name).toSet
-  let fullRpcInfos = (targetRpcInfoPairs
-    .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo) &
-    rpcInfos.filter(i => upgradeCount > 0 and not (i.name in targetsSet) and
-      installed.checkNeeded(i.name, i.version))).deduplicate
+  let installedUpgradeRpcInfos = rpcInfos.filter(i => upgradeCount > 0 and
+    not (i.name in targetsSet))
+
+  let upgradeStructs: seq[tuple[rpcInfo: RpcPackageInfo, needed: bool,
+    localIsNewer: Option[LocalIsNewer]]] = installedUpgradeRpcInfos
+    .map(i => (block:
+      let res = installed.checkNeeded(i.name, i.version)
+      let gitPackage = i.name.len > 4 and i.name[i.name.len - 4 .. i.name.len - 1] == "-git"
+      let localIsNewer = if gitPackage:
+          # Don't warn about newer local git packages
+          none(LocalIsNewer)
+        elif not res.needed and res.vercmp < 0:
+          some((i.name, installed[i.name].version, i.version))
+        else:
+          none(LocalIsNewer)
+      (i, res.needed, localIsNewer)))
+
+  let targetRpcInfos = targetRpcInfoPairs
+    .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo)
+  let upgradeRpcInfos = upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo)
+  let fullRpcInfos = targetRpcInfos & upgradeRpcInfos
 
   if fullRpcInfos.len > 0 and not print:
     echo(tr"downloading full package descriptions...")
   let (pkgInfos, errors) = getAurPackageInfo(fullRpcInfos.map(i => i.name),
     some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)
-  (pkgInfos, upToDateNeeded, errors)
+
+  let localIsNewerSeq = upgradeStructs
+    .filter(p => p.localIsNewer.isSome)
+    .map(p => p.localIsNewer.unsafeGet)
+
+  (pkgInfos, upToDateNeeded, localIsNewerSeq, errors)
 
 proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
@@ -1001,7 +1031,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       let installedTable = installed.map(i => (i.name, i)).toTable
       let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos).filter(isAurTargetFull)
 
-      let (aurPkgInfos, upToDateNeeded, aperrors) = obtainAurPackageInfos(config,
+      let (aurPkgInfos, upToDateNeeded, localIsNewerSeq, aperrors) = obtainAurPackageInfos(config,
         rpcInfos, rpcAurTargets, installedTable, printFormat.isSome, needed, upgradeCount)
       for e in aperrors: printError(config.color, e)
 
@@ -1018,6 +1048,11 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
         let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
         let aurTargets = fullTargets.filter(isAurTargetFull)
 
+        if printFormat.isNone and upgradeCount == 1:
+          for localIsNewer in localIsNewerSeq:
+            printWarning(config.color, tra("%s: local (%s) is newer than %s (%s)\n") %
+              [localIsNewer.name, localIsNewer.version, "aur", localIsNewer.aurVersion])
+
         if printFormat.isNone:
           for inst in upToDateNeeded:
             printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
@@ -1026,7 +1061,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
         let neededPacmanTargets = if printFormat.isNone and build and needed:
             pacmanTargets.filter(target => (block:
               let version = target.foundInfo.get.pkg.get.version
-              if installedTable.checkNeeded(target.name, version):
+              if installedTable.checkNeeded(target.name, version).needed:
                 true
               else:
                 printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
