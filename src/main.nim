@@ -184,8 +184,8 @@ proc handleHelp(operation: OperationType) =
         discard
 
 const
-  version = $getenv("PROG_VERSION")
-  copyright = $getenv("PROG_COPYRIGHT")
+  version = getEnv("PROG_VERSION")
+  copyright = getEnv("PROG_COPYRIGHT")
 
 proc handleVersion(): int =
   echo()

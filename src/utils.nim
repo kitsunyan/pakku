@@ -18,10 +18,19 @@ type
     shell: string
   ]
 
+proc cgetenv*(name: cstring): cstring
+  {.importc: "getenv", header: "<stdlib.h>".}
+
+proc csetenv*(name: cstring, value: cstring, override: cint): cint
+  {.importc: "setenv", header: "<stdlib.h>".}
+
+proc cunsetenv*(name: cstring): cint
+  {.importc: "unsetenv", header: "<stdlib.h>".}
+
 const
-  pkgLibDir* = getenv("PROG_PKGLIBDIR")
-  localStateDir* = getenv("PROG_LOCALSTATEDIR")
-  sysConfDir* = getenv("PROG_SYSCONFDIR")
+  pkgLibDir* = getEnv("PROG_PKGLIBDIR")
+  localStateDir* = getEnv("PROG_LOCALSTATEDIR")
+  sysConfDir* = getEnv("PROG_SYSCONFDIR")
 
   bashCmd* = "/bin/bash"
   suCmd* = "/usr/bin/su"
@@ -199,12 +208,6 @@ proc forkWaitRedirect*(call: () -> int): tuple[output: seq[string], code: int] =
 
   (lines, code)
 
-proc setenv*(name: cstring, value: cstring, override: cint): cint
-  {.importc, header: "<stdlib.h>".}
-
-proc unsetenv*(name: cstring): cint
-  {.importc, header: "<stdlib.h>".}
-
 proc getgrouplist*(user: cstring, group: Gid, groups: ptr cint, ngroups: var cint): cint
   {.importc, header: "<grp.h>".}
 
@@ -232,13 +235,13 @@ proc getUser(uid: int): User =
 let currentUser* = getUser(getuid().int)
 
 let initialUser* = try:
-  let sudoUid = getenv("SUDO_UID")
-  let polkitUid = getenv("PKEXEC_UID")
+  let sudoUid = getEnv("SUDO_UID")
+  let polkitUid = getEnv("PKEXEC_UID")
 
-  let uidString = if sudoUid != nil and sudoUid.len > 0:
-      some($sudoUid)
-    elif polkitUid != nil and polkitUid.len > 0:
-      some($polkitUid)
+  let uidString = if sudoUid.len > 0:
+      some(sudoUid)
+    elif polkitUid.len > 0:
+      some(polkitUid)
     else:
       none(string)
 
@@ -257,8 +260,22 @@ proc dropPrivileges*() =
     discard setgroups(user.groups.len, addr(groups[0]));
     discard setgid((Gid) user.gid)
     discard setuid((Uid) user.uid)
-    discard setenv("HOME", user.home, 1)
-    discard setenv("SHELL", user.shell, 1)
+
+    template replaceExisting(name: string, value: string) =
+      if cgetenv(name) != nil:
+        discard csetenv(name, value, 1)
+
+    replaceExisting("USER", user.name)
+    replaceExisting("USERNAME", user.name)
+    replaceExisting("LOGNAME", user.name)
+    replaceExisting("HOME", user.home)
+    replaceExisting("SHELL", user.shell)
+
+    discard cunsetenv("SUDO_COMMAND")
+    discard cunsetenv("SUDO_USER")
+    discard cunsetenv("SUDO_UID")
+    discard cunsetenv("SUDO_GID")
+    discard cunsetenv("PKEXEC_UID")
 
 proc toString*[T](arr: array[T, char], length: Option[int]): string =
   var workLength = length.get(T.high + 1)

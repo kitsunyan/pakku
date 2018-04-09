@@ -252,12 +252,12 @@ proc editLoop(config: Config, base: string, repoPath: string, gitPath: Option[st
         ('a', tr"abort operation"))
       editFileLoop(file)
     elif res == 'y':
-      let visualEnv = getenv("VISUAL")
-      let editorEnv = getenv("EDITOR")
-      let editor = if visualEnv != nil and visualEnv.len > 0:
-          $visualEnv
-        elif editorEnv != nil and editorEnv.len > 0:
-          $editorEnv
+      let visualEnv = getEnv("VISUAL")
+      let editorEnv = getEnv("EDITOR")
+      let editor = if visualEnv.len > 0:
+          visualEnv
+        elif editorEnv.len > 0:
+          editorEnv
         else:
           printColonUserInput(config.color, tr"Enter editor executable name" & ":",
             noconfirm, "", "")
@@ -304,11 +304,11 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
   let gitPath = pkgInfos[0].gitPath
   let buildPath = buildPath(repoPath, gitPath)
 
-  let confFileEnv = getenv("MAKEPKG_CONF")
-  let confFile = if confFileEnv == nil or confFileEnv.len == 0:
+  let confFileEnv = getEnv("MAKEPKG_CONF")
+  let confFile = if confFileEnv.len == 0:
       sysConfDir & "/makepkg.conf"
     else:
-      $confFileEnv
+      confFileEnv
 
   let workConfFile = config.tmpRoot & "/makepkg.conf"
 
@@ -334,8 +334,8 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
     printError(config.color, tr"failed to copy config file '$#'" % [confFile])
     (none(BuildResult), 1)
   else:
-    let envExt = getenv("PKGEXT")
-    let confExt = if envExt == nil or envExt.len == 0:
+    let envExt = getEnv("PKGEXT")
+    let confExt = if envExt.len == 0:
         forkWaitRedirect(() => (block:
           dropPrivileges()
           execResult(bashCmd, "-c",
@@ -343,11 +343,11 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
             "bash", workConfFile)))
           .output.optFirst.get("")
       else:
-        $envExt
+        envExt
 
     let buildCode = forkWait(proc: int =
       if chdir(buildPath) == 0:
-        discard unsetenv("MAKEPKG_CONF")
+        discard cunsetenv("MAKEPKG_CONF")
         dropPrivileges()
 
         if not noextract:
