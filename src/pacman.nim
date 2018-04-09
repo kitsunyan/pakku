@@ -349,8 +349,10 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
 
   let debug = args.check((none(string), "debug"))
   let progressBar = not args.check((none(string), "noprogressbar"))
-  let ignorePkgs = getAll((none(string), "ignore")).toSet
-  let ignoreGroups = getAll((none(string), "ignoregroups")).toSet
+  let ignorePkgs = lc[x | (y <- getAll((none(string), "ignore")),
+    x <- y.split(',')), string].toSet
+  let ignoreGroups = lc[x | (y <- getAll((none(string), "ignoregroups")),
+    x <- y.split(',')), string].toSet
 
   let hasKeyserver = forkWaitRedirect(() => (block:
     dropPrivileges()
