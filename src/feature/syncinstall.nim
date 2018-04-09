@@ -885,11 +885,12 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
   (nonConflicingPkgInfos, acceptedPkgInfos)
 
 proc checkNeeded(installed: Table[string, Installed],
-  name: string, version: string): tuple[needed: bool, vercmp: int] =
+  name: string, version: string, downgrade: bool): tuple[needed: bool, vercmp: int] =
   if installed.hasKey(name):
     let i = installed[name]
     let vercmp = vercmp(version, i.version)
-    (vercmp > 0, vercmp.int)
+    let needed = if downgrade: vercmp != 0 else: vercmp > 0
+    (needed, vercmp.int)
   else:
     (true, 0)
 
@@ -898,7 +899,8 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   installed: Table[string, Installed], print: bool, needed: bool,
   upgradeCount: int): (seq[PackageInfo], seq[Installed], seq[LocalIsNewer], seq[string]) =
   let targetRpcInfoPairs: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
-    targets.map(t => t.pkgInfo.get).map(i => (i, installed.checkNeeded(i.name, i.version).needed))
+    targets.map(t => t.pkgInfo.get).map(i => (i, installed
+      .checkNeeded(i.name, i.version, true).needed))
 
   let upToDateNeeded: seq[Installed] = if needed:
       targetRpcInfoPairs.map(pair => (block:
@@ -918,16 +920,16 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   let upgradeStructs: seq[tuple[rpcInfo: RpcPackageInfo, needed: bool,
     localIsNewer: Option[LocalIsNewer]]] = installedUpgradeRpcInfos
     .map(i => (block:
-      let res = installed.checkNeeded(i.name, i.version)
+      let res = installed.checkNeeded(i.name, i.version, upgradeCount >= 2)
       let gitPackage = i.name.len > 4 and i.name[i.name.len - 4 .. i.name.len - 1] == "-git"
-      let localIsNewer = if gitPackage:
-          # Don't warn about newer local git packages
-          none(LocalIsNewer)
+      let (newNeeded, localIsNewer) = if gitPackage:
+          # Don't warn about newer local git packages and don't downgrade them
+          (installed.checkNeeded(i.name, i.version, false).needed, none(LocalIsNewer))
         elif not res.needed and res.vercmp < 0:
-          some((i.name, installed[i.name].version, i.version))
+          (res.needed, some((i.name, installed[i.name].version, i.version)))
         else:
-          none(LocalIsNewer)
-      (i, res.needed, localIsNewer)))
+          (res.needed, none(LocalIsNewer))
+      (i, newNeeded, localIsNewer)))
 
   let targetRpcInfos = targetRpcInfoPairs
     .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo)
@@ -1061,7 +1063,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
         let neededPacmanTargets = if printFormat.isNone and build and needed:
             pacmanTargets.filter(target => (block:
               let version = target.foundInfo.get.pkg.get.version
-              if installedTable.checkNeeded(target.name, version).needed:
+              if installedTable.checkNeeded(target.name, version, true).needed:
                 true
               else:
                 printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
@@ -1102,12 +1104,26 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
               if not (pkgInfo.name in acceptedSet):
                 if not (pkgInfo.name in targetsSet) and upgradeCount > 0 and
                   installedTable.hasKey(pkgInfo.name):
-                  printWarning(config.color, tra("%s: ignoring package upgrade (%s => %s)\n") %
-                    [pkgInfo.name, installedTable[pkgInfo.name].version, pkgInfo.version])
+                  let installedVersion = installedTable[pkgInfo.name].version
+                  let newVersion = pkgInfo.version
+                  if vercmp(newVersion, installedVersion) < 0:
+                    printWarning(config.color, tra("%s: ignoring package downgrade (%s => %s)\n") %
+                      [pkgInfo.name, installedVersion, newVersion])
+                  else:
+                    printWarning(config.color, tra("%s: ignoring package upgrade (%s => %s)\n") %
+                      [pkgInfo.name, installedVersion, newVersion])
                 else:
                   printWarning(config.color, trp("skipping target: %s\n") % [pkgInfo.name])
-              elif pkgInfo.repo == "aur" and pkgInfo.maintainer.isNone:
-                printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
+              elif pkgInfo.repo == "aur":
+                if pkgInfo.maintainer.isNone:
+                  printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
+                if installedTable.hasKey(pkgInfo.name):
+                  let installedVersion = installedTable[pkgInfo.name].version
+                  let newVersion = pkgInfo.version
+                  if vercmp(newVersion, installedVersion) < 0:
+                    printWarning(config.color,
+                      tra("%s: downgrading from version %s to version %s\n") %
+                      [pkgInfo.name, installedVersion, newVersion])
 
           let buildAndAurTargetSet = finalPkgInfos.map(i => i.name).toSet
           let fullPkgInfos = finalPkgInfos & lc[i | (s <- satisfied.values,

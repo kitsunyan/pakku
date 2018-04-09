@@ -90,21 +90,17 @@ proc handleSync(args: seq[Argument], config: Config): int =
       execResult(collectedArgs)
     else:
       let isNonDefaultRoot = not config.isRootDefault
-      let isDowngrade = args.count((some("u"), "sysupgrade")) >= 2
       let isSkipDeps = args.check((some("d"), "nodeps"))
       let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
       let build = args.check((none(string), "build"))
       let noaur = args.check((none(string), "noaur"))
 
-      let noBuild = isNonDefaultRoot or isDowngrade or isSkipDeps or isRootNoDrop
+      let noBuild = isNonDefaultRoot or isSkipDeps or isRootNoDrop
 
       if build and noBuild:
         if isNonDefaultRoot:
           printError(config.color, tr"non-default root path is specified" & " -- " &
-            tr"building is not allowed")
-        elif isDowngrade:
-          printError(config.color, tr"downgrades are enabled" & " -- " &
             tr"building is not allowed")
         elif isSkipDeps:
           printError(config.color, tr"dependency check is skipped" & " -- " &
@@ -119,9 +115,6 @@ proc handleSync(args: seq[Argument], config: Config): int =
         if noaurAdd:
           if isNonDefaultRoot:
             printWarning(config.color, tr"non-default root path is specified" & " -- " &
-              tr"'$#' is assumed" % ["--noaur"])
-          elif isDowngrade:
-            printWarning(config.color, tr"downgrades are enabled" & " -- " &
               tr"'$#' is assumed" % ["--noaur"])
           elif isSkipDeps:
             printWarning(config.color, tr"dependency check is skipped" & " -- " &
