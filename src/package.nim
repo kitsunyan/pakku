@@ -215,9 +215,15 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
   rpcInfos: seq[RpcPackageInfo], baseSeq: ref seq[SrcInfoPair], nameSeq: ref seq[SrcInfoPair],
   arch: string, gitUrl: string, gitBranch: Option[string], gitCommit: Option[string],
   gitPath: Option[string]): Option[PackageInfo] =
-  let pairs = baseSeq[] & nameSeq[]
-  proc collect(keyName: string): seq[string] =
+  proc collectFromPairs(pairs: seq[SrcInfoPair], keyName: string): seq[string] =
     lc[x.value | (x <- pairs, x.key == keyName), string]
+
+  proc collect(keyName: string): seq[string] =
+    let res = collectFromPairs(nameSeq[], keyName)
+    if res.len == 0:
+      collectFromPairs(baseSeq[], keyName)
+    else:
+      res
 
   proc splitConstraint(name: string): PackageReference =
     var matches: array[3, string]
