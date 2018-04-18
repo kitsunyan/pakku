@@ -77,7 +77,7 @@ all: \
 	${TARGETS} \
 	${TARGETS_NODIST}
 
-completion/bash: completion/bash.in
+completion/bash: completion/make.sh completion/bash.in
 	@echo "GEN: $@"
 	@(cd completion && ./make.sh)
 
@@ -102,7 +102,7 @@ lib/bisect: lib/bisect.nim
 	--nimcache:"${NIM_CACHE_DIR}/bisect" \
 	-o:"$@" "$<"
 
-src/pakku: src/main.nim
+src/pakku: src/main.nim $(shell find src -name \*.nim)
 	@echo "NIM: $@"
 	@nim c ${NIM_OPTIONS} \
 	--nimcache:"${NIM_CACHE_DIR}/main" \
