@@ -144,7 +144,7 @@ proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
         foundInfo: target.foundInfo, pkgInfo: none(T)))
 
 proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptional: bool,
-  assumeExplicit: seq[string]): (HashSet[string], HashSet[string], HashSet[string]) =
+  assumeExplicit: HashSet[string]): (HashSet[string], HashSet[string], HashSet[string]) =
   let (explicit, dependsTable, alternatives) = block:
     var explicit = newSeq[string]()
     var dependsTable = initTable[string,
@@ -173,7 +173,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       if provides.len > 0:
         alternatives.add($pkg.name, provides)
 
-    (explicit.toSet + assumeExplicit.toSet, dependsTable, alternatives)
+    (explicit.toSet + assumeExplicit, dependsTable, alternatives)
 
   let providedBy = lc[(y, x.key) | (x <- alternatives.namedPairs, y <- x.value),
     tuple[reference: PackageReference, name: string]]

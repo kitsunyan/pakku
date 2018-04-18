@@ -8,7 +8,8 @@ type
   Installed = tuple[
     name: string,
     version: string,
-    groups: seq[string]
+    groups: seq[string],
+    explicit: bool
   ]
 
   SatisfyResult = tuple[
@@ -518,8 +519,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       (newSeq[(string, string)](), 1)
     else:
       let asdeps = install.filter(p => not (p.name in explicits)).map(p => p.file)
-      let explicitPkgs = install.filter(p => p.name in explicits)
-      let asexplicit = explicitPkgs.map(p => p.file)
+      let asexplicit = install.filter(p => p.name in explicits).map(p => p.file)
 
       proc doInstall(files: seq[string], addArgs: seq[Argument]): int =
         if files.len > 0:
@@ -529,12 +529,14 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         else:
           0
 
-      let asdepsCode = doInstall(asdeps, @[("asdeps", none(string), ArgumentType.long)])
+      let asdepsCode = doInstall(asdeps,
+        @[("asdeps", none(string), ArgumentType.long)])
       if asdepsCode != 0:
         handleTmpRoot(false)
         (newSeq[(string, string)](), asdepsCode)
       else:
-        let asexplicitCode = doInstall(asexplicit, @[])
+        let asexplicitCode = doInstall(asexplicit,
+          @[("asexplicit", none(string), ArgumentType.long)])
         if asexplicitCode != 0:
           handleTmpRoot(false)
           (newSeq[(string, string)](), asexplicitCode)
@@ -547,7 +549,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
-  targetNames: seq[string], build: bool, directPacmanTargets: seq[string],
+  keepNames: HashSet[string], build: bool, directPacmanTargets: seq[string],
   additionalPacmanTargets: seq[string], basePackages: seq[seq[seq[PackageInfo]]]): int =
   let workDirectPacmanTargets = if build: @[] else: directPacmanTargets
 
@@ -712,7 +714,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
     else:
       let (_, initialUnrequired, initialUnrequiredWithoutOptional) = withAlpm(config.root,
         config.db, newSeq[string](), config.arch, handle, dbs, errors):
-        queryUnrequired(handle, true, true, targetNames)
+        queryUnrequired(handle, true, true, keepNames)
 
       let (additionalCode, additionalSome) = if additionalPacmanTargets.len > 0: (block:
           printColon(config.color, tr"Installing build dependencies...")
@@ -766,10 +768,10 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
               printWarning(config.color, tr"installation aborted")
             removeTmp()
 
-            let newTargetNames = targetNames.map(n => installedAs.opt(n).get(n))
+            let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
             let (_, finalUnrequired, finalUnrequiredWithoutOptional) = withAlpm(config.root,
               config.db, newSeq[string](), config.arch, handle, dbs, errors):
-              queryUnrequired(handle, true, true, newTargetNames)
+              queryUnrequired(handle, true, true, newKeepNames)
 
             let unrequired = finalUnrequired - initialUnrequired
             let unrequiredOptional = finalUnrequiredWithoutOptional -
@@ -977,7 +979,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
     let (syncTargets, checkAur) = findSyncTargets(handle, dbs, targets,
       not build, not build)
 
-    let installed = lc[($p.name, $p.version, p.groupsSeq) |
+    let installed = lc[($p.name, $p.version, p.groupsSeq, p.reason == AlpmReason.explicit) |
       (p <- handle.local.packages), Installed]
 
     let foreignUpgrade = if upgradeCount > 0: (block:
@@ -1140,10 +1142,22 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
               satisfied, unsatisfied, directPacmanTargets, additionalPacmanTargets,
               orderedPkgInfos)
           else:
-            let targetNames = targets.map(t => t.name)
-            let explicits = if not args.check((none(string), "asdeps")): targetNames else: @[]
+            let foreignInstalled = installed.filter(i => i.name in foreignUpgrade)
+            let foreignExplicitsNamesSet = foreignInstalled
+              .filter(i => i.explicit).map(i => i.name).toSet
+            let foreignDepsNamesSet = foreignInstalled
+              .filter(i => not i.explicit).map(i => i.name).toSet
+            let targetNamesSet = targets.map(t => t.name).toSet
+            let keepNames = foreignExplicitsNamesSet + foreignDepsNamesSet + targetNamesSet
+
+            let explicits = if args.check((none(string), "asexplicit")):
+                targetNamesSet + foreignExplicitsNamesSet + foreignDepsNamesSet
+              elif args.check((none(string), "asdeps")):
+                initSet[string]()
+              else:
+                foreignExplicitsNamesSet + (targetNamesSet - foreignDepsNamesSet)
 
             handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
-              explicits.toSet, installed, satisfied, unsatisfied,
-              targetNames, build, directPacmanTargets, additionalPacmanTargets,
+              explicits, installed, satisfied, unsatisfied,
+              keepNames, build, directPacmanTargets, additionalPacmanTargets,
               orderedPkgInfos)
