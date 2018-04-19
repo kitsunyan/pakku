@@ -165,7 +165,7 @@ const
     o("force")
   ]
 
-  allOptions = commonOptions & transactionOptions &
+  allOptions* = commonOptions & transactionOptions &
     upgradeOptions & queryOptions & removeOptions & syncOptions &
     databaseOptions & filesOptions
 

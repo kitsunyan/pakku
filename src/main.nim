@@ -216,7 +216,8 @@ template withErrorHandler(propColor: Option[bool], T: typedesc, body: untyped):
 
 let init = withErrorHandler(none(bool),
   tuple[parsedArgs: seq[Argument], config: Config]):
-  let parsedArgs = splitArgs(commandLineParams(), optionsWithParameter)
+  let parsedArgs = splitArgs(commandLineParams(), optionsWithParameter,
+    (operations.map(o => o.pair.long) & allOptions.map(o => o.pair.long)).deduplicate)
   let pacmanConfig = obtainPacmanConfig(parsedArgs)
   let config = obtainConfig(pacmanConfig)
   (parsedArgs, config)

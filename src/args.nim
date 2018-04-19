@@ -37,9 +37,8 @@ iterator splitSingle(valueFull: string, optionsWithParameter: HashSet[OptionKey]
     if (key, false) in optionsWithParameter:
       if i == valueFull.high:
         if next.isNone:
-          raise commandError(trc("%s: option requires an argument -- '%c'\n").strip
-            .replace("%s", "$#").replace("%c", "$#") % [getAppFilename(), key],
-            showError = false)
+          raise commandError(trc("%s: option requires an argument -- '%c'\n") %
+            [getAppFilename(), key], showError = false)
         else:
           yield (key, next, true)
       else:
@@ -50,7 +49,7 @@ iterator splitSingle(valueFull: string, optionsWithParameter: HashSet[OptionKey]
       i += 1
 
 proc splitArgs*(params: seq[string],
-  optionsWithParameter: HashSet[OptionKey]): seq[Argument] =
+  optionsWithParameter: HashSet[OptionKey], longOptions: seq[string]): seq[Argument] =
   proc handleCurrentNext(current: string, next: Option[string],
     stdinConsumed: bool, endOfOpts: bool): (seq[Argument], Option[string], bool, bool) =
     if current == "-":
@@ -68,20 +67,33 @@ proc splitArgs*(params: seq[string],
     elif current[0 .. 1] == "--":
       let valueFull = current[2 .. ^1]
       let index = valueFull.find("=")
-      let key = if index >= 0: valueFull[0 .. index - 1] else: valueFull
+      let keyCandidate = if index >= 0: valueFull[0 .. index - 1] else: valueFull
       let valueOption = if index >= 0: some(valueFull[index + 1 .. ^1]) else: none(string)
 
-      if (key, true) in optionsWithParameter:
+      let abbreviatedKeys = longOptions.filter(o => o.find(keyCandidate) == 0)
+      let keyOption = if abbreviatedKeys.len == 1:
+          some(abbreviatedKeys[0])
+        elif abbreviatedKeys.contains(keyCandidate):
+          some(keyCandidate)
+        else:
+          none(string)
+      let key = keyOption.get(keyCandidate)
+
+      if keyOption.isNone and abbreviatedKeys.len >= 2:
+        raise commandError(trc"%s: option '%s%s' is ambiguous; possibilities:" %
+          [getAppFilename(), "--", keyCandidate] &
+          abbreviatedKeys.map(s => "'--" & s & "'").foldl(a & " " & b, ""), showError = false)
+      elif (key, true) in optionsWithParameter:
         if valueOption.isSome:
           return (@[(key, valueOption, ArgumentType.long)], next, stdinConsumed, false)
         elif next.isSome:
           return (@[(key, next, ArgumentType.long)], none(string), stdinConsumed, false)
         else:
-          raise commandError(trc("%s: option '%s%s' requires an argument\n").strip
-            .replace("%s", "$#") % [getAppFilename(), "--", key], showError = false)
+          raise commandError(trc("%s: option '%s%s' requires an argument\n") %
+            [getAppFilename(), "--", key], showError = false)
       elif valueOption.isSome:
-        raise commandError(trc("%s: option '%s%s' doesn't allow an argument\n").strip
-          .replace("%s", "$#") % [getAppFilename(), "--", key], showError = false)
+        raise commandError(trc("%s: option '%s%s' doesn't allow an argument\n") %
+          [getAppFilename(), "--", key], showError = false)
       else:
         return (@[(key, none(string), ArgumentType.long)], next, stdinConsumed, false)
     elif current[0] == '-' and current.len >= 2:
