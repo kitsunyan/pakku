@@ -193,11 +193,7 @@ proc handleVersion(): int =
   echo(' '.repeat(23), "Copyright (C) ", copyright)
   pacmanExec(false, false, ("V", none(string), ArgumentType.short))
 
-proc signal(sign: cint, handler: pointer): pointer
-  {.importc, header: "<signal.h>".}
-
 discard setlocale(LC_ALL, "")
-discard signal(SIGINT, cast[pointer](SIG_DFL))
 
 template withErrorHandler(propColor: Option[bool], T: typedesc, body: untyped):
   tuple[success: Option[T], code: int] =

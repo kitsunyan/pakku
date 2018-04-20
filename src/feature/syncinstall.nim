@@ -299,7 +299,7 @@ proc editLoop(config: Config, base: string, repoPath: string, gitPath: Option[st
   editFileLoopAll(0)
 
 proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
-  noextract: bool): (Option[BuildResult], int) =
+  noextract: bool): (Option[BuildResult], int, bool) =
   let base = pkgInfos[0].base
   let repoPath = repoPath(config.tmpRoot, base)
   let gitPath = pkgInfos[0].gitPath
@@ -333,7 +333,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
 
   if not workConfFileCopySuccess:
     printError(config.color, tr"failed to copy config file '$#'" % [confFile])
-    (none(BuildResult), 1)
+    (none(BuildResult), 1, false)
   else:
     let envExt = getEnv("PKGEXT")
     let confExt = if envExt.len == 0:
@@ -346,29 +346,32 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
       else:
         envExt
 
-    let buildCode = forkWait(proc: int =
-      if chdir(buildPath) == 0:
-        discard cunsetenv("MAKEPKG_CONF")
-        dropPrivileges()
+    let (buildCode, interrupted) = catchInterrupt():
+      forkWait(proc: int =
+        if chdir(buildPath) == 0:
+          discard cunsetenv("MAKEPKG_CONF")
+          dropPrivileges()
 
-        if not noextract:
-          removeDirQuiet(buildPath & "src")
+          if not noextract:
+            removeDirQuiet(buildPath & "src")
 
-        let optional: seq[tuple[arg: string, cond: bool]] = @[
-          ("-e", noextract),
-          ("-m", not config.color)
-        ]
+          let optional: seq[tuple[arg: string, cond: bool]] = @[
+            ("-e", noextract),
+            ("-m", not config.color)
+          ]
 
-        execResult(@[makepkgCmd, "--config", workConfFile, "-f"] &
-          optional.filter(o => o.cond).map(o => o.arg))
-      else:
-        quit(1))
+          execResult(@[makepkgCmd, "--config", workConfFile, "-f"] &
+            optional.filter(o => o.cond).map(o => o.arg))
+        else:
+          quit(1))
 
     discard unlink(workConfFile)
 
-    if buildCode != 0:
+    if interrupted:
+      (none(BuildResult), buildCode, interrupted)
+    elif buildCode != 0:
       printError(config.color, tr"failed to build '$#'" % [base])
-      (none(BuildResult), buildCode)
+      (none(BuildResult), buildCode, false)
     else:
       let resultPkgInfos = reloadPkgInfos(config, buildPath, pkgInfos)
 
@@ -392,7 +395,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
       if failedNames.len > 0:
         for name in failedNames:
           printError(config.color, tr"$#: failed to extract package info" % [name])
-        (none(BuildResult), 1)
+        (none(BuildResult), 1, false)
       else:
         let targetPkgInfos: seq[ReplacePkgInfo] = resultByIndices
           .map(i => (some(i.name), i.pkgInfo.get))
@@ -400,7 +403,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
         let additionalPkgInfos: seq[ReplacePkgInfo] = resultPkgInfos
           .filter(i => not (i.name in filterNames))
           .map(i => (none(string), i))
-        (some(($confExt, targetPkgInfos & additionalPkgInfos)), 0)
+        (some(($confExt, targetPkgInfos & additionalPkgInfos)), 0, false)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =
@@ -423,10 +426,12 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       if res == 'a':
         (none(BuildResult), 1)
       else:
-        let (buildResult, code) = buildLoop(config, pkgInfos,
+        let (buildResult, code, interrupted) = buildLoop(config, pkgInfos,
           noconfirm, noextract)
 
-        if code != 0:
+        if interrupted:
+          (buildResult, 1)
+        elif code != 0:
           proc ask(): char =
             let res = printColonUserChoice(config.color,
               tr"Build failed, retry?", ['y', 'e', 'n', '?'], 'n', '?',

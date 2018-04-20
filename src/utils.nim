@@ -277,6 +277,27 @@ proc dropPrivileges*() =
     discard cunsetenv("SUDO_GID")
     discard cunsetenv("PKEXEC_UID")
 
+var intSigact: SigAction
+intSigact.sa_handler = SIG_DFL
+discard sigaction(SIGINT, intSigact)
+
+var wasInterrupted = false
+
+proc interruptHandler(signal: cint): void {.noconv.} =
+  wasInterrupted = true
+
+template catchInterrupt*(body: untyped): untyped =
+  block:
+    var intSigact: SigAction
+    var oldIntSigact: SigAction
+    intSigact.sa_handler = interruptHandler
+    discard sigaction(SIGINT, intSigact, oldIntSigact)
+    let data = body
+    let interrupted = wasInterrupted
+    wasInterrupted = false
+    discard sigaction(SIGINT, oldIntSigact)
+    (data, interrupted)
+
 proc toString*[T](arr: array[T, char], length: Option[int]): string =
   var workLength = length.get(T.high + 1)
   var str = newStringOfCap(workLength)
