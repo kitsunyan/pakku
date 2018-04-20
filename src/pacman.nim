@@ -70,6 +70,7 @@ const
   ]
 
   commonOptions*: seq[CommandOption] = @[
+    o("h", "help"),
     ^o("b", "dbpath"),
     ^o("r", "root"),
     o("v", "verbose"),
