@@ -1,6 +1,5 @@
 import
-  future, options, os, re, sequtils, sets, strutils, tables,
-  utils,
+  future, options, os, re, sequtils, sets, strutils, tables, utils,
   "wrapper/alpm"
 
 type
