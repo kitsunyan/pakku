@@ -1,6 +1,6 @@
 import
   algorithm, future, options, os, posix, sequtils, sets, strutils, tables,
-  "../args", "../aur", "../config", "../common", "../format", "../package",
+  "../args", "../aur", "../config", "../common", "../format", "../lists", "../package",
     "../pacman", "../utils",
   "../wrapper/alpm"
 
@@ -477,19 +477,19 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
 proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   basePackages: seq[seq[PackageInfo]], explicits: HashSet[string],
   noconfirm: bool): (seq[(string, string)], int) =
-  proc buildNext(index: int, buildResults: seq[BuildResult]): (seq[BuildResult], int) =
+  proc buildNext(index: int, buildResults: List[BuildResult]): (List[BuildResult], int) =
     if index < basePackages.len:
       let (buildResult, code) = buildFromSources(config, commonArgs,
         basePackages[index], noconfirm)
 
       if code != 0:
-        (buildResults, code)
+        (buildResults.reversed, code)
       else:
-        buildNext(index + 1, buildResults & buildResult.unsafeGet)
+        buildNext(index + 1, buildResult.unsafeGet ^& buildResults)
     else:
-      (buildResults, 0)
+      (buildResults.reversed, 0)
 
-  let (buildResults, buildCode) = buildNext(0, @[])
+  let (buildResults, buildCode) = buildNext(0, nil)
 
   proc formatArchiveFile(pkgInfo: PackageInfo, ext: string): string =
     let arch = if config.arch in pkgInfo.archs: config.arch else: "any"
@@ -594,7 +594,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
           let flatBasePackages = lc[x | (a <- basePackages, x <- a), seq[PackageInfo]]
           update(0, flatBasePackages.len)
 
-          proc cloneNext(index: int, paths: seq[string]): (seq[string], int) =
+          proc cloneNext(index: int, paths: List[string]): (List[string], int) =
             if index < flatBasePackages.len:
               let pkgInfos = flatBasePackages[index]
               let base = pkgInfos[0].base
@@ -603,18 +603,18 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
 
               if cloneCode == 0:
                 update(index + 1, flatBasePackages.len)
-                cloneNext(index + 1, paths & repoPath)
+                cloneNext(index + 1, repoPath ^& paths)
               else:
                 terminate()
                 for e in cloneErrorMessage: printError(config.color, e)
                 printError(config.color, tr"$#: failed to clone git repository" %
                   [pkgInfos[0].base])
-                (paths & repoPath, cloneCode)
+                ((repoPath ^& paths).reversed, cloneCode)
             else:
               terminate()
-              (paths, 0)
+              (paths.reversed, 0)
 
-          let (paths, cloneCode) = cloneNext(0, @[])
+          let (paths, cloneCode) = cloneNext(0, nil)
           if cloneCode != 0:
             (paths, cloneCode)
           else:
@@ -704,9 +704,9 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
 
             (paths, checkNext(0, false, false))
         else:
-          (@[], 1))
+          (nil, 1))
       else:
-        (@[], 0)
+        (nil, 0)
 
     proc removeTmp() =
       for path in paths:
@@ -759,16 +759,16 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
             printUnsatisfied(config, satisfied, unsatisfied)
             1
           else:
-            proc installNext(index: int, installedAs: seq[(string, string)],
+            proc installNext(index: int, installedAs: List[(string, string)],
               lastCode: int): (Table[string, string], int, int) =
               if index < basePackages.len and lastCode == 0:
                 let (addInstalledAs, code) = installGroupFromSources(config, commonArgs,
                   basePackages[index], explicits, noconfirm)
-                installNext(index + 1, installedAs & addInstalledAs, code)
+                installNext(index + 1, addInstalledAs ^& installedAs, code)
               else:
-                (installedAs.toTable, lastCode, index - 1)
+                (toSeq(installedAs.items).toTable, lastCode, index - 1)
 
-            let (installedAs, code, index) = installNext(0, @[], 0)
+            let (installedAs, code, index) = installNext(0, nil, 0)
             if code != 0 and index < basePackages.len - 1:
               printWarning(config.color, tr"installation aborted")
             removeTmp()

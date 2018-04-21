@@ -1,5 +1,5 @@
 import
-  future, json, options, re, sequtils, sets, strutils, tables,
+  future, json, lists, options, re, sequtils, sets, strutils, tables,
   package, utils,
   "wrapper/curl"
 
@@ -180,13 +180,13 @@ proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
         .replace("&quot;", "\"")
         .replace("&amp;", "&")
 
-    proc findAllMatches(start: int, found: seq[AurComment]): seq[AurComment] =
+    proc findAllMatches(start: int, found: List[AurComment]): List[AurComment] =
       var matches: array[3, string]
       let index = content.find(commentRe, matches, start)
       if index >= 0:
-        findAllMatches(index + 1, found & (matches[0].strip, matches[1].strip,
-          transformComment(matches[2])))
+        findAllMatches(index + 1, (matches[0].strip, matches[1].strip,
+          transformComment(matches[2])) ^& found)
       else:
         found
 
-    (findAllMatches(0, @[]), none(string))
+    (toSeq(findAllMatches(0, nil).reversed.items), none(string))
