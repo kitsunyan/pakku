@@ -20,7 +20,7 @@ type
     repo*: Option[string]
 
   SyncPackageTarget* = object of PackageTarget
-    foundInfo*: Option[SyncFoundInfo]
+    foundInfos*: seq[SyncFoundInfo]
 
   FullPackageTarget*[T] = object of SyncPackageTarget
     pkgInfo*: Option[T]
@@ -62,10 +62,10 @@ proc packageTargets*(args: seq[Argument]): seq[PackageTarget] =
     PackageTarget(reference: reference, repo: repo)))
 
 proc isAurTargetSync*(target: SyncPackageTarget): bool =
-  target.foundInfo.isNone and (target.repo.isNone or target.repo == some("aur"))
+  target.foundInfos.len == 0 and (target.repo.isNone or target.repo == some("aur"))
 
 proc isAurTargetFull*[T: RpcPackageInfo](target: FullPackageTarget[T]): bool =
-  target.foundInfo.isSome and target.foundInfo.unsafeGet.repo == "aur"
+  target.foundInfos.len > 0 and target.foundInfos[0].repo == "aur"
 
 proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   targets: seq[PackageTarget], allowGroups: bool, checkProvides: bool):
@@ -79,7 +79,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
           return true
     return false
 
-  proc findSync(target: PackageTarget): Option[SyncFoundInfo] =
+  proc findSync(target: PackageTarget): seq[SyncFoundInfo] =
     if target.repo.isSome:
       let repo = target.repo.unsafeGet
 
@@ -89,15 +89,21 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
 
         if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference):
           let base = if pkg.base == nil: target.reference.name else: $pkg.base
-          return some((repo, some((base, $pkg.version, some($pkg.arch)))))
+          return @[(repo, some((base, $pkg.version, some($pkg.arch))))]
         elif checkProvides and target.reference.checkProvided(db):
-          return some((repo, none(SyncFoundPackageInfo)))
+          return @[(repo, none(SyncFoundPackageInfo))]
         else:
-          return none(SyncFoundInfo)
+          return @[]
       else:
-        return none(SyncFoundInfo)
+        return @[]
     else:
-      let directResult = dbs
+      if allowGroups and target.reference.constraint.isNone:
+        let groupRepo = lc[d | (d <- dbs, g <- d.groups,
+          $g.name == target.reference.name), ptr AlpmDatabase].optFirst
+        if groupRepo.isSome:
+          return @[($groupRepo.unsafeGet.name, none(SyncFoundPackageInfo))]
+
+      let directResults = dbs
         .map(db => (block:
           let pkg = db[target.reference.name]
           if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference):
@@ -106,28 +112,20 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
           else:
             none(SyncFoundInfo)))
         .filter(i => i.isSome)
-        .optFirst
-        .flatten
+        .map(i => i.unsafeGet)
 
-      if directResult.isSome:
-        return directResult
+      if directResults.len > 0:
+        return directResults
+      elif checkProvides:
+        for db in dbs:
+          if target.reference.checkProvided(db):
+            return @[($db.name, none(SyncFoundPackageInfo))]
+        return @[]
       else:
-        if allowGroups and target.reference.constraint.isNone:
-          let groupRepo = lc[d | (d <- dbs, g <- d.groups,
-            $g.name == target.reference.name), ptr AlpmDatabase].optFirst
-          if groupRepo.isSome:
-            return groupRepo.map(d => ($d.name, none(SyncFoundPackageInfo)))
-
-        if checkProvides:
-          for db in dbs:
-            if target.reference.checkProvided(db):
-              return some(($db.name, none(SyncFoundPackageInfo)))
-          return none(SyncFoundInfo)
-        else:
-          return none(SyncFoundInfo)
+        return @[]
 
   let syncTargets = targets.map(t => SyncPackageTarget(reference: t.reference,
-    repo: t.repo, foundInfo: findSync(t)))
+    repo: t.repo, foundInfos: findSync(t)))
   let checkAurNames = syncTargets.filter(isAurTargetSync).map(t => t.reference.name)
   (syncTargets, checkAurNames)
 
@@ -136,7 +134,7 @@ proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
   let aurTable = pkgInfos.map(i => (i.name, i)).toTable
 
   targets.map(proc (target: SyncPackageTarget): FullPackageTarget[T] =
-    let res = if target.foundInfo.isNone and aurTable.hasKey(target.reference.name): (block:
+    let res = if target.foundInfos.len == 0 and aurTable.hasKey(target.reference.name): (block:
         let pkgInfo = aurTable[target.reference.name]
         if target.reference.isProvidedBy(pkgInfo.toPackageReference):
           some((("aur", some((pkgInfo.base, pkgInfo.version, none(string)))), pkgInfo))
@@ -148,10 +146,10 @@ proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
     if res.isSome:
       let (syncInfo, pkgInfo) = res.get
       FullPackageTarget[T](reference: target.reference, repo: target.repo,
-        foundInfo: some(syncInfo), pkgInfo: some(pkgInfo))
+        foundInfos: @[syncInfo], pkgInfo: some(pkgInfo))
     else:
       FullPackageTarget[T](reference: target.reference, repo: target.repo,
-        foundInfo: target.foundInfo, pkgInfo: none(T)))
+        foundInfos: target.foundInfos, pkgInfo: none(T)))
 
 proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptional: bool,
   assumeExplicit: HashSet[string]): (HashSet[string], HashSet[string], HashSet[string]) =
@@ -212,8 +210,8 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
 
   (installed, withOptionalSet, withoutOptionalSet)
 
-proc formatArgument*(target: PackageTarget): string =
-  target.repo.map(r => r & "/" & $target.reference).get($target.reference)
+proc `$`*[T: PackageTarget](target: T): string =
+  target.repo.map(proc (r: string): string = r & "/" & $target.reference).get($target.reference)
 
 proc ensureTmpOrError*(config: Config): Option[string] =
   let tmpRootExists = try:
@@ -413,7 +411,7 @@ proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
   pacmanTargets: seq[FullPackageTarget[T]]): (seq[PackageInfo], seq[string]) =
   let bases = pacmanTargets
     .map(proc (target: FullPackageTarget[T]): LookupBaseGroup =
-      let info = target.foundInfo.get
+      let info = target.foundInfos[0]
       let pkg = info.pkg.get
       (pkg.base, pkg.version, pkg.arch.get, info.repo))
     .deduplicate

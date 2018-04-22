@@ -61,7 +61,7 @@ proc formatDate(date: Option[int64]): seq[string] =
 
 proc handleTarget(config: Config, padding: int, args: seq[Argument],
   target: FullPackageTarget[PackageInfo]): int =
-  if target.foundInfo.isSome:
+  if target.foundInfos.len > 0:
     if isAurTargetFull[PackageInfo](target):
       let pkgInfo = target.pkgInfo.unsafeGet
 
@@ -85,16 +85,19 @@ proc handleTarget(config: Config, padding: int, args: seq[Argument],
         (tr"Rating", @[formatPkgRating(pkgInfo.votes, pkgInfo.popularity)], false))
 
       0
+    elif target.reference.constraint.isSome:
+      # pacman doesn't support constraints for --info queries
+      pacmanRun(false, config.color, args & target.foundInfos.map(i =>
+        (i.repo & "/" & target.reference.name, none(string), ArgumentType.target)))
     else:
       pacmanRun(false, config.color, args &
-        (target.formatArgument, none(string), ArgumentType.target))
+        ($target, none(string), ArgumentType.target))
   else:
     if target.repo == some("aur"):
-      printError(config.color, trp("package '%s' was not found\n") % [target.formatArgument])
+      printError(config.color, trp("package '%s' was not found\n") % [$target])
       1
     else:
-      pacmanRun(false, config.color, args &
-        (target.formatArgument, none(string), ArgumentType.target))
+      pacmanRun(false, config.color, args & ($target, none(string), ArgumentType.target))
 
 proc handleSyncInfo*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
@@ -112,7 +115,8 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
   let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos)
 
   let code = min(aerrors.len, 1)
-  if fullTargets.filter(isAurTargetFull[PackageInfo]).len == 0:
+  if fullTargets.filter(t => isAurTargetFull[PackageInfo](t) or t.repo == some("aur")).len == 0 and
+    fullTargets.filter(t => t.reference.constraint.isSome).len == 0:
     if code == 0:
       pacmanExec(false, config.color, callArgs)
     else:

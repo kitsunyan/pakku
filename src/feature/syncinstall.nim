@@ -211,7 +211,7 @@ proc filterNotFoundSyncTargetsInternal(syncTargets: seq[SyncPackageTarget],
   upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
   # collect packages which were found neither in sync DB nor in AUR
   syncTargets.filter(t => not (upToDateNeededTable.opt(t.reference.name)
-    .map(r => t.reference.isProvidedBy(r)).get(false)) and t.foundInfo.isNone and
+    .map(r => t.reference.isProvidedBy(r)).get(false)) and t.foundInfos.len == 0 and
     not (t.isAurTargetSync and pkgInfoReferencesTable.opt(t.reference.name)
     .map(r => t.reference.isProvidedBy(r)).get(false)))
 
@@ -1071,7 +1071,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
 
         let neededPacmanTargets = if printFormat.isNone and build and needed:
             pacmanTargets.filter(target => (block:
-              let version = target.foundInfo.get.pkg.get.version
+              let version = target.foundInfos[0].pkg.get.version
               if installedTable.checkNeeded(target.reference.name, version, true).needed:
                 true
               else:
@@ -1138,7 +1138,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
           let fullPkgInfos = finalPkgInfos & lc[i | (s <- satisfied.values,
             i <- s.buildPkgInfo, not (i.name in buildAndAurTargetSet)), PackageInfo].deduplicate
 
-          let directPacmanTargets = pacmanTargets.map(t => t.formatArgument)
+          let directPacmanTargets = pacmanTargets.map(`$`)
           let additionalPacmanTargets = lc[x.name | (x <- satisfied.values,
             not x.installed and x.buildPkgInfo.isNone), string]
           let orderedPkgInfos = orderInstallation(fullPkgInfos, satisfied)
