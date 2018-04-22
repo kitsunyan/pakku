@@ -177,8 +177,28 @@ proc toPackageReference*(dependency: ptr AlpmDependency): PackageReference =
 template toPackageReference*(pkg: ptr AlpmPackage): PackageReference =
   ($pkg.name, none(string), some((ConstraintOperation.eq, $pkg.version)))
 
-template toPackageReference*(pkg: PackageInfo): PackageReference =
+template toPackageReference*(pkg: RpcPackageInfo): PackageReference =
   (pkg.name, none(string), some((ConstraintOperation.eq, pkg.version)))
+
+proc parsePackageReference*(name: string, withDescription: bool): PackageReference =
+  var matches: array[3, string]
+
+  let descIndex = name.find(": ")
+  let (description, workName) = if withDescription and descIndex >= 0:
+      (some(name[descIndex + 2 .. ^1]), name[0 .. descIndex - 1])
+    else:
+      (none(string), name)
+
+  if workName.match(re"([^><=]*)\ *(=|>=|<=|>|<)\ *([^ ]*)", matches):
+    let constraints = toSeq(enumerate[ConstraintOperation]())
+    let index = constraints.map(s => $s).find(matches[1])
+
+    if index >= 0:
+      (matches[0], description, some((constraints[index], matches[2])))
+    else:
+      (matches[0], description, none(VersionConstraint))
+  else:
+    (workName, description, none(VersionConstraint))
 
 proc parseSrcInfoKeys(srcInfo: string):
   tuple[baseSeq: ref seq[SrcInfoPair], table: OrderedTable[string, ref seq[SrcInfoPair]]] =
@@ -224,29 +244,9 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
     else:
       res
 
-  proc splitConstraint(name: string): PackageReference =
-    var matches: array[3, string]
-
-    let descIndex = name.find(": ")
-    let (description, workName) = if descIndex >= 0:
-        (some(name[descIndex + 2 .. ^1]), name[0 .. descIndex - 1])
-      else:
-        (none(string), name)
-
-    if workName.match(re"([^><=]*)\ *(=|>=|<=|>|<)\ *([^ ]*)", matches):
-      let constraints = toSeq(enumerate[ConstraintOperation]())
-      let index = constraints.map(s => $s).find(matches[1])
-
-      if index >= 0:
-        (matches[0], description, some((constraints[index], matches[2])))
-      else:
-        (matches[0], description, none(VersionConstraint))
-    else:
-      (workName, description, none(VersionConstraint))
-
   proc collectArch(keyName: string): seq[PackageReference] =
     (collect(keyName) & collect(keyName & "_" & arch))
-      .map(splitConstraint)
+      .map(n => parsePackageReference(n, true))
       .filter(c => c.name.len > 0)
 
   proc filterReferences(references: seq[PackageReference],

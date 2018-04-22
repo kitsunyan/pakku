@@ -16,7 +16,7 @@ type
   ]
 
   PackageTarget* = object of RootObj
-    name*: string
+    reference*: PackageReference
     repo*: Option[string]
 
   SyncPackageTarget* = object of PackageTarget
@@ -52,12 +52,14 @@ proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: 
     (0, args)
 
 proc packageTargets*(args: seq[Argument]): seq[PackageTarget] =
-  args.targets.map(proc (target: string): PackageTarget =
+  args.targets.map(target => (block:
     let splitTarget = target.split('/', 2)
-    if splitTarget.len == 2:
-      PackageTarget(name: splitTarget[1], repo: some(splitTarget[0]))
-    else:
-      PackageTarget(name: target, repo: none(string)))
+    let (repo, nameConstraint) = if splitTarget.len == 2:
+        (some(splitTarget[0]), splitTarget[1])
+      else:
+        (none(string), target)
+    let reference = parsePackageReference(nameConstraint, false)
+    PackageTarget(reference: reference, repo: repo)))
 
 proc isAurTargetSync*(target: SyncPackageTarget): bool =
   target.foundInfo.isNone and (target.repo.isNone or target.repo == some("aur"))
@@ -70,10 +72,10 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   (seq[SyncPackageTarget], seq[string]) =
   let dbTable = dbs.map(d => ($d.name, d)).toTable
 
-  proc checkProvided(name: string, db: ptr AlpmDatabase): bool =
+  proc checkProvided(reference: PackageReference, db: ptr AlpmDatabase): bool =
     for pkg in db.packages:
       for provides in pkg.provides:
-        if $provides.name == name:
+        if reference.isProvidedBy(provides.toPackageReference):
           return true
     return false
 
@@ -83,12 +85,12 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
 
       if dbTable.hasKey(repo):
         let db = dbTable[repo]
-        let pkg = db[target.name]
+        let pkg = db[target.reference.name]
 
-        if pkg != nil:
-          let base = if pkg.base == nil: target.name else: $pkg.base
+        if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference):
+          let base = if pkg.base == nil: target.reference.name else: $pkg.base
           return some((repo, some((base, $pkg.version, some($pkg.arch)))))
-        elif checkProvides and target.name.checkProvided(db):
+        elif checkProvides and target.reference.checkProvided(db):
           return some((repo, none(SyncFoundPackageInfo)))
         else:
           return none(SyncFoundInfo)
@@ -97,9 +99,9 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
     else:
       let directResult = dbs
         .map(db => (block:
-          let pkg = db[target.name]
-          if pkg != nil:
-            let base = if pkg.base == nil: target.name else: $pkg.base
+          let pkg = db[target.reference.name]
+          if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference):
+            let base = if pkg.base == nil: target.reference.name else: $pkg.base
             some(($db.name, some((base, $pkg.version, some($pkg.arch)))))
           else:
             none(SyncFoundInfo)))
@@ -110,37 +112,45 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
       if directResult.isSome:
         return directResult
       else:
-        if allowGroups:
-          let groupRepo = lc[d | (d <- dbs, g <- d.groups, $g.name == target.name),
-            ptr AlpmDatabase].optFirst
+        if allowGroups and target.reference.constraint.isNone:
+          let groupRepo = lc[d | (d <- dbs, g <- d.groups,
+            $g.name == target.reference.name), ptr AlpmDatabase].optFirst
           if groupRepo.isSome:
             return groupRepo.map(d => ($d.name, none(SyncFoundPackageInfo)))
 
         if checkProvides:
           for db in dbs:
-            if target.name.checkProvided(db):
+            if target.reference.checkProvided(db):
               return some(($db.name, none(SyncFoundPackageInfo)))
           return none(SyncFoundInfo)
         else:
           return none(SyncFoundInfo)
 
-  let syncTargets = targets.map(t => SyncPackageTarget(name: t.name,
+  let syncTargets = targets.map(t => SyncPackageTarget(reference: t.reference,
     repo: t.repo, foundInfo: findSync(t)))
-  let checkAur = syncTargets.filter(isAurTargetSync).map(t => t.name)
-  (syncTargets, checkAur)
+  let checkAurNames = syncTargets.filter(isAurTargetSync).map(t => t.reference.name)
+  (syncTargets, checkAurNames)
 
 proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
   pkgInfos: seq[T]): seq[FullPackageTarget[T]] =
   let aurTable = pkgInfos.map(i => (i.name, i)).toTable
 
   targets.map(proc (target: SyncPackageTarget): FullPackageTarget[T] =
-    if target.foundInfo.isNone and aurTable.hasKey(target.name):
-      let pkgInfo = aurTable[target.name]
-      let syncInfo = ("aur", some((pkgInfo.base, pkgInfo.version, none(string))))
-      FullPackageTarget[T](name: target.name, repo: target.repo,
+    let res = if target.foundInfo.isNone and aurTable.hasKey(target.reference.name): (block:
+        let pkgInfo = aurTable[target.reference.name]
+        if target.reference.isProvidedBy(pkgInfo.toPackageReference):
+          some((("aur", some((pkgInfo.base, pkgInfo.version, none(string)))), pkgInfo))
+        else:
+          none((SyncFoundInfo, T)))
+      else:
+        none((SyncFoundInfo, T))
+
+    if res.isSome:
+      let (syncInfo, pkgInfo) = res.get
+      FullPackageTarget[T](reference: target.reference, repo: target.repo,
         foundInfo: some(syncInfo), pkgInfo: some(pkgInfo))
     else:
-      FullPackageTarget[T](name: target.name, repo: target.repo,
+      FullPackageTarget[T](reference: target.reference, repo: target.repo,
         foundInfo: target.foundInfo, pkgInfo: none(T)))
 
 proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptional: bool,
@@ -203,7 +213,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
   (installed, withOptionalSet, withoutOptionalSet)
 
 proc formatArgument*(target: PackageTarget): string =
-  target.repo.map(r => r & "/" & target.name).get(target.name)
+  target.repo.map(r => r & "/" & $target.reference).get($target.reference)
 
 proc ensureTmpOrError*(config: Config): Option[string] =
   let tmpRootExists = try:
@@ -408,7 +418,7 @@ proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
       (pkg.base, pkg.version, pkg.arch.get, info.repo))
     .deduplicate
 
-  let pacmanTargetNames = pacmanTargets.map(t => t.name)
+  let pacmanTargetNames = pacmanTargets.map(t => t.reference.name)
   obtainBuildPkgInfosInternal(config, bases, pacmanTargetNames)
 
 proc cloneRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[string]) =

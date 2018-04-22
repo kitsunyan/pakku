@@ -100,13 +100,13 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
   let targets = args.packageTargets
 
-  let (syncTargets, checkAur) = withAlpm(config.root, config.db,
+  let (syncTargets, checkAurNames) = withAlpm(config.root, config.db,
     config.dbs, config.arch, handle, dbs, errors):
     for e in errors: printError(config.color, e)
     findSyncTargets(handle, dbs, targets, false, false)
 
-  let (pkgInfos, aerrors) = getAurPackageInfo(checkAur, none(seq[RpcPackageInfo]),
-    config.arch, proc (a: int, b: int) = discard)
+  let (pkgInfos, aerrors) = getAurPackageInfo(checkAurNames,
+    none(seq[RpcPackageInfo]), config.arch, proc (a: int, b: int) = discard)
   for e in aerrors: printError(config.color, e)
 
   let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos)
