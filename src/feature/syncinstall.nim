@@ -155,7 +155,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     .filter(r => not (r in totalAurFail))
 
   let (aurSuccess, aurFail) = if not noaur and aurCheck.len > 0: (block:
-      let (update, terminate) = if aurCheck.len >= 4:
+      let (update, terminate) = if aurCheck.len >= 4 and not printMode:
           printProgressShare(config.progressBar, tr"checking build dependencies")
         else:
           (proc (a: int, b: int) {.closure.} = discard, proc {.closure.} = discard)
@@ -855,14 +855,14 @@ proc handlePrint(args: seq[Argument], config: Config, printFormat: string, upgra
 
 proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
   targetNamesSet: HashSet[string], installed: Table[string, Installed],
-  print: bool, noconfirm: bool): (seq[PackageInfo], seq[PackageInfo]) =
+  printMode: bool, noconfirm: bool): (seq[PackageInfo], seq[PackageInfo]) =
   let acceptedPkgInfos = pkgInfos.filter(pkgInfo => (block:
     let instGroups = lc[x | (i <- installed.opt(pkgInfo.name),
       x <- i.groups), string]
 
     if config.ignored(pkgInfo.name, (instGroups & pkgInfo.groups).deduplicate):
       if pkgInfo.name in targetNamesSet:
-        if not print:
+        if not printMode:
           let input = printColonUserChoice(config.color,
             trp"%s is in IgnorePkg/IgnoreGroup. Install anyway?" % [pkgInfo.name],
             ['y', 'n'], 'y', 'n', noconfirm, 'y')
@@ -879,7 +879,7 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
       (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.toPackageReference)), int].len > 0 or
         lc[0 | (c <- p.conflicts, c.isProvidedBy(b.toPackageReference)), int].len > 0)),
       PackageInfo]
-    if not print and conflictsWith.len > 0:
+    if not printMode and conflictsWith.len > 0:
       for conflict in conflictsWith:
         printWarning(config.color,
           tra("removing '%s' from target list because it conflicts with '%s'\n") %
@@ -892,10 +892,10 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
   (nonConflicingPkgInfos, acceptedPkgInfos)
 
 proc deduplicatePkgInfos(targets: seq[PackageInfo],
-  config: Config, print: bool): seq[PackageInfo] =
+  config: Config, printMode: bool): seq[PackageInfo] =
   targets.foldl(block:
     if a.map(t => t.name).contains(b.name):
-      if not print:
+      if not printMode:
         printWarning(config.color, trp("skipping target: %s\n") % [b.name])
       a
     else:
@@ -914,7 +914,7 @@ proc checkNeeded(installed: Table[string, Installed],
 
 proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   rpcAurTargets: seq[FullPackageTarget[RpcPackageInfo]],
-  installed: Table[string, Installed], print: bool, needed: bool,
+  installed: Table[string, Installed], printMode: bool, needed: bool,
   upgradeCount: int): (seq[PackageInfo], seq[Installed], seq[LocalIsNewer], seq[string]) =
   let targetRpcInfoPairs: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
     rpcAurTargets.map(t => t.pkgInfo.get).map(i => (i, installed
@@ -954,7 +954,7 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   let upgradeRpcInfos = upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo)
   let fullRpcInfos = targetRpcInfos & upgradeRpcInfos
 
-  if fullRpcInfos.len > 0 and not print:
+  if fullRpcInfos.len > 0 and not printMode:
     echo(tr"downloading full package descriptions...")
   let (pkgInfos, errors) = getAurPackageInfo(fullRpcInfos.map(i => i.name),
     some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)

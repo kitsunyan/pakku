@@ -84,7 +84,9 @@ proc handleSync(args: seq[Argument], config: Config): int =
     handleSyncSearch(args, config)
   elif syncArgs.checkOpGroup(OpGroup.syncInstall) and
     (args.check((some("u"), "sysupgrade")) or args.targets.len > 0):
-    if currentUser.uid != 0 and config.sudoExec:
+    let printMode = args.check((some("p"), "print")) or args.check((none(string), "print-format"))
+
+    if currentUser.uid != 0 and config.sudoExec and not printMode:
       let collectedArgs = @[sudoCmd, getAppFilename()] &
         lc[x | (y <- args, x <- y.collectArg), string]
       execResult(collectedArgs)
@@ -98,7 +100,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
 
       let noBuild = isNonDefaultRoot or isSkipDeps or isRootNoDrop
 
-      if build and noBuild:
+      if not printMode and build and noBuild:
         if isNonDefaultRoot:
           printError(config.color, tr"non-default root path is specified" & " -- " &
             tr"building is not allowed")
@@ -110,7 +112,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
             tr"building is not allowed")
         1
       else:
-        let noaurAdd = noBuild and not noaur
+        let noaurAdd = not printMode and noBuild and not noaur
 
         if noaurAdd:
           if isNonDefaultRoot:
