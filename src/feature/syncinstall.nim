@@ -891,6 +891,17 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
 
   (nonConflicingPkgInfos, acceptedPkgInfos)
 
+proc deduplicatePkgInfos(targets: seq[PackageInfo],
+  config: Config, print: bool): seq[PackageInfo] =
+  targets.foldl(block:
+    if a.map(t => t.name).contains(b.name):
+      if not print:
+        printWarning(config.color, trp("skipping target: %s\n") % [b.name])
+      a
+    else:
+      a & b,
+    newSeq[PackageInfo]())
+
 proc checkNeeded(installed: Table[string, Installed],
   name: string, version: string, downgrade: bool): tuple[needed: bool, vercmp: int] =
   if installed.hasKey(name):
@@ -1134,9 +1145,10 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
                       tra("%s: downgrading from version %s to version %s\n") %
                       [pkgInfo.name, installedVersion, newVersion])
 
-          let buildAndAurTargetSet = finalPkgInfos.map(i => i.name).toSet
-          let fullPkgInfos = finalPkgInfos & lc[i | (s <- satisfied.values,
-            i <- s.buildPkgInfo, not (i.name in buildAndAurTargetSet)), PackageInfo].deduplicate
+          let buildAndAurNamesSet = finalPkgInfos.map(i => i.name).toSet
+          let fullPkgInfos = (finalPkgInfos & lc[i | (s <- satisfied.values,
+            i <- s.buildPkgInfo, not (i.name in buildAndAurNamesSet)), PackageInfo])
+            .deduplicatePkgInfos(config, printFormat.isSome)
 
           let directPacmanTargets = pacmanTargets.map(`$`)
           let additionalPacmanTargets = lc[x.name | (x <- satisfied.values,
