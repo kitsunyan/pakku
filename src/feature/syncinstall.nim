@@ -418,7 +418,7 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
     (none(BuildResult), cloneCode)
   else:
     proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
-      let res = if showEditLoop:
+      let res = if showEditLoop and not noconfirm:
           editLoop(config, base, repoPath, gitPath, false, noconfirm)
         else:
           'n'
@@ -634,7 +634,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                     let commentsReversed = toSeq(comments.reversed)
                     printComments(config.color, pkgInfos[0].maintainer, commentsReversed)
 
-                let editRes = if skipEdit:
+                let editRes = if skipEdit or noconfirm:
                     'n'
                   else: (block:
                     let defaultYes = aur and not config.viewNoDefault
