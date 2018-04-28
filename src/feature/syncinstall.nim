@@ -240,7 +240,7 @@ proc printUnsatisfied(config: Config,
               trp("unable to satisfy dependency '%s' required by %s\n") %
               [$reference, pkgInfo.name])
 
-proc editLoop(config: Config, base: string, repoPath: string, gitPath: Option[string],
+proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[string],
   defaultYes: bool, noconfirm: bool): char =
   proc editFileLoop(file: string): char =
     let default = if defaultYes: 'y' else: 'n'
@@ -267,20 +267,20 @@ proc editLoop(config: Config, base: string, repoPath: string, gitPath: Option[st
         'n'
       else:
         discard forkWait(proc: int =
-          discard chdir(buildPath(repoPath, gitPath))
+          discard chdir(buildPath(repoPath, gitSubdir))
           dropPrivileges()
           execResult(bashCmd, "-c", """$1 "$2"""", "bash", editor, file))
         editFileLoop(file)
     else:
       res
 
-  let rawFiles = if gitPath.isSome:
+  let rawFiles = if gitSubdir.isSome:
       forkWaitRedirect(() => (block:
         dropPrivileges()
         execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
-          gitPath.unsafeGet & "/")))
+          gitSubdir.unsafeGet & "/")))
         .output
-        .map(s => s[gitPath.unsafeGet.len + 1 .. ^1])
+        .map(s => s[gitSubdir.unsafeGet.len + 1 .. ^1])
     else:
       forkWaitRedirect(() => (block:
         dropPrivileges()
@@ -302,8 +302,8 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
   noextract: bool): (Option[BuildResult], int, bool) =
   let base = pkgInfos[0].base
   let repoPath = repoPath(config.tmpRoot, base)
-  let gitPath = pkgInfos[0].gitPath
-  let buildPath = buildPath(repoPath, gitPath)
+  let gitSubdir = pkgInfos[0].gitSubdir
+  let buildPath = buildPath(repoPath, gitSubdir)
 
   let confFileEnv = getEnv("MAKEPKG_CONF")
   let confFile = if confFileEnv.len == 0:
@@ -409,70 +409,64 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =
   let base = pkgInfos[0].base
   let repoPath = repoPath(config.tmpRoot, base)
-  let gitPath = pkgInfos[0].gitPath
-  let (cloneCode, cloneErrorMessage) = cloneRepo(config, pkgInfos)
+  let gitSubdir = pkgInfos[0].gitSubdir
 
-  if cloneCode != 0:
-    for e in cloneErrorMessage: printError(config.color, e)
-    printError(config.color, tr"$#: failed to clone git repository" % [base])
-    (none(BuildResult), cloneCode)
-  else:
-    proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
-      let res = if showEditLoop and not noconfirm:
-          editLoop(config, base, repoPath, gitPath, false, noconfirm)
-        else:
-          'n'
-
-      if res == 'a':
-        (none(BuildResult), 1)
+  proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
+    let res = if showEditLoop and not noconfirm:
+        editLoop(config, base, repoPath, gitSubdir, false, noconfirm)
       else:
-        let (buildResult, code, interrupted) = buildLoop(config, pkgInfos,
-          noconfirm, noextract)
+        'n'
 
-        if interrupted:
-          (buildResult, 1)
-        elif code != 0:
-          proc ask(): char =
-            let res = printColonUserChoice(config.color,
-              tr"Build failed, retry?", ['y', 'e', 'n', '?'], 'n', '?',
-              noconfirm, 'n')
-            if res == '?':
-              printUserInputHelp(('e', tr"retry with --noextract option"))
-              ask()
-            else:
-              res
+    if res == 'a':
+      (none(BuildResult), 1)
+    else:
+      let (buildResult, code, interrupted) = buildLoop(config, pkgInfos,
+        noconfirm, noextract)
 
-          let res = ask()
-          if res == 'e':
-            loop(true, true)
-          elif res == 'y':
-            loop(false, true)
+      if interrupted:
+        (buildResult, 1)
+      elif code != 0:
+        proc ask(): char =
+          let res = printColonUserChoice(config.color,
+            tr"Build failed, retry?", ['y', 'e', 'n', '?'], 'n', '?',
+            noconfirm, 'n')
+          if res == '?':
+            printUserInputHelp(('e', tr"retry with --noextract option"))
+            ask()
           else:
-            (buildResult, code)
+            res
+
+        let res = ask()
+        if res == 'e':
+          loop(true, true)
+        elif res == 'y':
+          loop(false, true)
         else:
           (buildResult, code)
-
-    let preBuildCode = if config.preBuildCommand.isSome: (block:
-        printColon(config.color, tr"Running pre-build command...")
-
-        let code = forkWait(() => (block:
-          discard chdir(buildPath(repoPath, gitPath))
-          dropPrivileges()
-          execResult(bashCmd, "-c", config.preBuildCommand.unsafeGet)))
-
-        if code != 0 and printColonUserChoice(config.color,
-          tr"Command failed, continue?", ['y', 'n'], 'n', 'n',
-          noconfirm, 'n') == 'y':
-          0
-        else:
-          code)
       else:
-        0
+        (buildResult, code)
 
-    if preBuildCode != 0:
-      (none(BuildResult), preBuildCode)
+  let preBuildCode = if config.preBuildCommand.isSome: (block:
+      printColon(config.color, tr"Running pre-build command...")
+
+      let code = forkWait(() => (block:
+        discard chdir(buildPath(repoPath, gitSubdir))
+        dropPrivileges()
+        execResult(bashCmd, "-c", config.preBuildCommand.unsafeGet)))
+
+      if code != 0 and printColonUserChoice(config.color,
+        tr"Command failed, continue?", ['y', 'n'], 'n', 'n',
+        noconfirm, 'n') == 'y':
+        0
+      else:
+        code)
     else:
-      loop(false, false)
+      0
+
+  if preBuildCode != 0:
+    (none(BuildResult), preBuildCode)
+  else:
+    loop(false, false)
 
 proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   basePackages: seq[seq[PackageInfo]], explicits: HashSet[string],
@@ -555,7 +549,13 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
   keepNames: HashSet[string], build: bool, directPacmanTargets: seq[string],
-  additionalPacmanTargets: seq[string], basePackages: seq[seq[seq[PackageInfo]]]): int =
+  additionalPacmanTargets: seq[string], basePackages: seq[seq[seq[PackageInfo]]],
+  buildPaths: seq[string]): int =
+  proc clearBuildPaths() =
+    for path in buildPaths:
+      removeDirQuiet(path)
+      discard rmdir(config.tmpRoot)
+
   let workDirectPacmanTargets = if build: @[] else: directPacmanTargets
 
   let (directCode, directSome) = if workDirectPacmanTargets.len > 0 or upgradeCount > 0:
@@ -565,12 +565,14 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
       (0, false)
 
   let directSatisfiedCode = if directCode == 0 and unsatisfied.len > 0: (block:
+      clearBuildPaths()
       printUnsatisfied(config, satisfied, unsatisfied)
       1)
     else:
       directCode
 
   if directSatisfiedCode != 0:
+    clearBuildPaths()
     directSatisfiedCode
   else:
     let commonArgs = args.keepOnlyOptions(commonOptions, upgradeCommonOptions)
@@ -586,6 +588,8 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
           tr"Proceed with building?", ['y', 'n'], 'y', 'n', noconfirm, 'y')
 
         if input == 'y':
+          let buildPathsSet = buildPaths.toSet
+
           let (update, terminate) = if config.debug:
               (proc (a: int, b: int) {.closure.} = discard, proc {.closure.} = discard)
             else:
@@ -599,7 +603,11 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
               let pkgInfos = flatBasePackages[index]
               let base = pkgInfos[0].base
               let repoPath = repoPath(config.tmpRoot, base)
-              let (cloneCode, cloneErrorMessage) = cloneRepo(config, flatBasePackages[index])
+              let (cloneCode, cloneErrorMessage) = if repoPath in buildPathsSet:
+                  (0, none(string))
+                else: (block:
+                  removeDirQuiet(repoPath)
+                  cloneAurRepo(config, flatBasePackages[index]))
 
               if cloneCode == 0:
                 update(index + 1, flatBasePackages.len)
@@ -638,13 +646,13 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                     'n'
                   else: (block:
                     let defaultYes = aur and not config.viewNoDefault
-                    editLoop(config, base, repoPath, pkgInfos[0].gitPath, defaultYes, noconfirm))
+                    editLoop(config, base, repoPath, pkgInfos[0].gitSubdir, defaultYes, noconfirm))
 
                 if editRes == 'a':
                   1
                 else:
                   let resultPkgInfos = reloadPkgInfos(config,
-                    repoPath & "/" & pkgInfos[0].gitPath.get("."), pkgInfos)
+                    repoPath & "/" & pkgInfos[0].gitSubdir.get("."), pkgInfos)
                   let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
 
                   proc keysLoop(index: int, skipKeys: bool): char =
@@ -708,13 +716,14 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
       else:
         (nil, 0)
 
-    proc removeTmp() =
+    proc clearPaths() =
       for path in paths:
         removeDirQuiet(path)
       discard rmdir(config.tmpRoot)
 
     if confirmAndCloneCode != 0:
-      removeTmp()
+      clearBuildPaths()
+      clearPaths()
       confirmAndCloneCode
     else:
       let (_, initialUnrequired, initialUnrequiredWithoutOptional) = withAlpm(config.root,
@@ -733,7 +742,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
           (0, false)
 
       if additionalCode != 0:
-        removeTmp()
+        clearPaths()
         additionalCode
       else:
         if basePackages.len > 0:
@@ -755,7 +764,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
               x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
 
           if unsatisfied.len > 0:
-            removeTmp()
+            clearPaths()
             printUnsatisfied(config, satisfied, unsatisfied)
             1
           else:
@@ -771,7 +780,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
             let (installedAs, code, index) = installNext(0, nil, 0)
             if code != 0 and index < basePackages.len - 1:
               printWarning(config.color, tr"installation aborted")
-            removeTmp()
+            clearPaths()
 
             let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
             let (_, finalUnrequired, finalUnrequiredWithoutOptional) = withAlpm(config.root,
@@ -1096,11 +1105,11 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
         let checkPacmanPkgInfos = printFormat.isNone and build and
           neededPacmanTargets.len > 0
 
-        let (buildPkgInfos, obtainErrorMessages) = if checkPacmanPkgInfos: (block:
+        let (buildPkgInfos, buildPaths, obtainErrorMessages) = if checkPacmanPkgInfos: (block:
             echo(tr"checking official repositories...")
             obtainBuildPkgInfos[PackageInfo](config, pacmanTargets))
           else:
-            (@[], @[])
+            (@[], @[], @[])
 
         if checkPacmanPkgInfos and buildPkgInfos.len < pacmanTargets.len:
           # "--build" conflicts with "--sysupgrade", so it's ok to fail here
@@ -1179,4 +1188,4 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
             handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
               explicits, installed, satisfied, unsatisfied,
               keepNames, build, directPacmanTargets, additionalPacmanTargets,
-              orderedPkgInfos)
+              orderedPkgInfos, buildPaths)

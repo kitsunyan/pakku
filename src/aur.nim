@@ -106,7 +106,7 @@ proc getAurPackageInfo*(pkgs: seq[string], rpcInfosOption: Option[seq[RpcPackage
             (@[], operror)
           else:
             let pkgInfos = parseSrcInfo("aur", srcInfo, arch,
-              aurUrl & base & ".git", none(string), none(string), none(string), rpcInfos)
+              aurUrl & base & ".git", none(string), rpcInfos)
             (pkgInfos, none(string))
 
         let parsed = deduplicated.foldl(a & obtainAndParse(b, a.len), newSeq[ParseResult]())

@@ -228,7 +228,7 @@ proc ensureTmpOrError*(config: Config): Option[string] =
     none(string)
 
 proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
-  compareMethod: string, relativePath: string, version: string): Option[string] =
+  compareMethod: string, gitSubdir: string, version: string): Option[string] =
   template forkExecWithoutOutput(args: varargs[string]): int =
     forkWait(() => (block:
       discard close(0)
@@ -268,7 +268,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       let foundVersion = forkWaitRedirect(() => (block:
         dropPrivileges()
         execResult(pkgLibDir & "/bisect",
-          compareMethod, repoPath & "/" & relativePath, version)))
+          compareMethod, repoPath & "/" & gitSubdir, version)))
         .output.optFirst
 
       let checkout2Code = forkExecWithoutOutput(gitCmd, "-C", repoPath,
@@ -305,7 +305,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       none(string)
     else:
       discard forkExecWithoutOutput(gitCmd, "-C", repoPath,
-        "bisect", "run", pkgLibDir & "/bisect", compareMethod, relativePath, version)
+        "bisect", "run", pkgLibDir & "/bisect", compareMethod, gitSubdir, version)
 
       let commit = forkWaitRedirect(() => (block:
         dropPrivileges()
@@ -322,7 +322,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
           checkedCommit
         else:
           # non-incremental git history (e.g. downgrade without epoch change), bisect again
-          bisectVersion(repoPath, debug, commit, compareMethod, relativePath, version)
+          bisectVersion(repoPath, debug, commit, compareMethod, gitSubdir, version)
       elif checkFirst and workFirstCommit.isSome:
         checkCommit(workFirstCommit.unsafeGet)
       else:
@@ -342,73 +342,80 @@ proc obtainSrcInfo*(path: string): string =
 proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): seq[PackageInfo] =
   let srcInfo = obtainSrcInfo(path)
   let res = parseSrcInfo(pkgInfos[0].repo, srcInfo, config.arch,
-    pkgInfos[0].gitUrl, pkgInfos[0].gitBranch, pkgInfos[0].gitCommit, pkgInfos[0].gitPath)
+    pkgInfos[0].gitUrl, pkgInfos[0].gitSubdir)
   if res.len > 0:
     res
   else:
     pkgInfos
 
 proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
-  pacmanTargetNames: seq[string]): (seq[PackageInfo], seq[string]) =
+  pacmanTargetNames: seq[string]): (seq[PackageInfo], seq[string], seq[string]) =
   let lookupResults: seq[LookupGitResult] = bases
     .map(b => (b, lookupGitRepo(b.repo, b.base, b.arch)))
   let notFoundRepos = lookupResults.filter(r => r.git.isNone)
 
   if notFoundRepos.len > 0:
     let messages = notFoundRepos.map(r => tr"$#: repository not found" % [r.group.base])
-    (newSeq[PackageInfo](), messages)
+    (newSeq[PackageInfo](), newSeq[string](), messages)
   else:
     let message = ensureTmpOrError(config)
     if message.isSome:
-      (@[], @[message.unsafeGet])
+      (@[], @[], @[message.unsafeGet])
     else:
       proc findCommitAndGetSrcInfo(base: string, version: string,
-        repo: string, git: GitRepo): seq[PackageInfo] =
+        repo: string, git: GitRepo): tuple[pkgInfos: seq[PackageInfo], path: Option[string]] =
         let repoPath = repoPath(config.tmpRoot, base)
         removeDirQuiet(repoPath)
 
-        try:
-          if forkWait(() => (block:
-            dropPrivileges()
-            execResult(gitCmd, "-C", config.tmpRoot,
-              "clone", "-q", git.url, "-b", git.branch,
-              "--single-branch", base))) == 0:
-            let commit = bisectVersion(repoPath, config.debug, none(string),
-              "source", git.path, version)
+        if forkWait(() => (block:
+          dropPrivileges()
+          execResult(gitCmd, "-C", config.tmpRoot,
+            "clone", "-q", git.url, "-b", git.branch,
+            "--single-branch", base))) == 0:
+          let commit = bisectVersion(repoPath, config.debug, none(string),
+            "source", git.path, version)
 
-            if commit.isNone:
-              @[]
-            else:
-              discard forkWait(() => (block:
-                dropPrivileges()
-                execResult(gitCmd, "-C", repoPath,
-                  "checkout", "-q", commit.unsafeGet)))
-
-              let srcInfo = obtainSrcInfo(repoPath & "/" & git.path)
-              parseSrcInfo(repo, srcInfo, config.arch,
-                git.url, some(git.branch), commit, some(git.path))
-                .filter(i => i.version == version)
+          if commit.isNone:
+            removeDirQuiet(repoPath)
+            (newSeq[PackageInfo](), none(string))
           else:
-            @[]
-        finally:
-          removeDirQuiet(repoPath)
+            discard forkWait(() => (block:
+              dropPrivileges()
+              execResult(gitCmd, "-C", repoPath,
+                "checkout", "-q", commit.unsafeGet)))
 
-      let pkgInfos = lc[x | (r <- lookupResults, x <- findCommitAndGetSrcInfo(r.group.base,
-        r.group.version, r.group.repo, r.git.get)), PackageInfo]
+            let srcInfo = obtainSrcInfo(repoPath & "/" & git.path)
+            let pkgInfos = parseSrcInfo(repo, srcInfo, config.arch,
+              git.url, some(git.path))
+              .filter(i => i.version == version)
+            (pkgInfos, some(repoPath))
+        else:
+          removeDirQuiet(repoPath)
+          (newSeq[PackageInfo](), none(string))
+
+      let pkgInfosWithPaths = lookupResults.map(r => findCommitAndGetSrcInfo(r.group.base,
+        r.group.version, r.group.repo, r.git.get))
+
+      let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
+      let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
 
       let pkgInfosTable = pkgInfos.map(i => (i.name, i)).toTable
 
       let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
         x <- pkgInfosTable.opt(y)), PackageInfo]
-      let messages = pacmanTargetNames
+      let errorMessages = pacmanTargetNames
         .filter(n => not pkgInfosTable.hasKey(n))
         .map(n => tr"$#: failed to get package info" % [n])
 
+      if errorMessages.len > 0:
+        for path in paths:
+          removeDirQuiet(path)
       discard rmdir(config.tmpRoot)
-      (foundPkgInfos, messages)
+      (foundPkgInfos, paths, errorMessages)
 
 proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
-  pacmanTargets: seq[FullPackageTarget[T]]): (seq[PackageInfo], seq[string]) =
+  pacmanTargets: seq[FullPackageTarget[T]]):
+  (seq[PackageInfo], seq[string], seq[string]) =
   let bases = pacmanTargets
     .map(proc (target: FullPackageTarget[T]): LookupBaseGroup =
       let info = target.foundInfos[0]
@@ -419,7 +426,7 @@ proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
   let pacmanTargetNames = pacmanTargets.map(t => t.reference.name)
   obtainBuildPkgInfosInternal(config, bases, pacmanTargetNames)
 
-proc cloneRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[string]) =
+proc cloneAurRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[string]) =
   let base = basePackages[0].base
   let repoPath = repoPath(config.tmpRoot, base)
 
@@ -428,28 +435,12 @@ proc cloneRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[st
     (1, message)
   elif repoPath.existsDir():
     (0, none(string))
+  elif basePackages[0].repo != "aur":
+    raise newException(SystemError, "invalid clone call")
   else:
-    let gitUrl = basePackages[0].gitUrl
-    let gitBranch = basePackages[0].gitBranch
-    let gitCommit = basePackages[0].gitCommit
-    let aur = basePackages[0].repo == "aur"
-    let branch = gitBranch.get("master")
-
     let cloneCode = forkWait(() => (block:
       dropPrivileges()
       execResult(gitCmd, "-C", config.tmpRoot,
-        "clone", "-q", gitUrl, "-b", branch, "--single-branch", base)))
+        "clone", "-q", basePackages[0].gitUrl, "--single-branch", base)))
 
-    if cloneCode == 0:
-      if gitCommit.isSome:
-        let code = forkWait(() => (block:
-          dropPrivileges()
-          execResult(gitCmd, "-C", repoPath,
-            "reset", "-q", "--hard", gitCommit.unsafeGet)))
-        (code, none(string))
-      elif aur:
-        (0, none(string))
-      else:
-        (1, none(string))
-    else:
-      (cloneCode, none(string))
+    (cloneCode, none(string))
