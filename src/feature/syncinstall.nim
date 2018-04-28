@@ -954,8 +954,6 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   let upgradeRpcInfos = upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo)
   let fullRpcInfos = targetRpcInfos & upgradeRpcInfos
 
-  if fullRpcInfos.len > 0 and not printMode:
-    echo(tr"downloading full package descriptions...")
   let (pkgInfos, errors) = getAurPackageInfo(fullRpcInfos.map(i => i.name),
     some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)
 
@@ -1030,8 +1028,11 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       checkAurNames
 
   withAur():
-    if checkAurNamesFull.len > 0 and printFormat.isNone:
-      printColon(config.color, tr"Checking AUR database...")
+    if printFormat.isNone and (checkAurNamesFull.len > 0 or build):
+      printColon(config.color, tr"Resolving build targets...")
+      if checkAurNamesFull.len > 0:
+        echo(tr"checking AUR database...")
+
     let (rpcInfos, rerrors) = getRpcPackageInfo(checkAurNamesFull)
     for e in rerrors: printError(config.color, e)
 
@@ -1096,7 +1097,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
           neededPacmanTargets.len > 0
 
         let (buildPkgInfos, obtainErrorMessages) = if checkPacmanPkgInfos: (block:
-            printColon(config.color, tr"Checking repositories...")
+            echo(tr"checking official repositories...")
             obtainBuildPkgInfos[PackageInfo](config, pacmanTargets))
           else:
             (@[], @[])
