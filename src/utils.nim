@@ -253,13 +253,17 @@ except:
 proc canDropPrivileges*(): bool =
   initialUser.isSome
 
-proc dropPrivileges*() =
+proc dropPrivileges*(): bool =
   if initialUser.isSome:
     let user = initialUser.unsafeGet
     var groups = user.groups.map(x => x.cint)
-    discard setgroups(user.groups.len, addr(groups[0]));
-    discard setgid((Gid) user.gid)
-    discard setuid((Uid) user.uid)
+
+    if setgroups(user.groups.len, addr(groups[0])) < 0:
+      return false
+    if setgid((Gid) user.gid) != 0:
+      return false
+    if setuid((Uid) user.uid) != 0:
+      return false
 
     template replaceExisting(name: string, value: string) =
       if cgetenv(name) != nil:
@@ -276,6 +280,10 @@ proc dropPrivileges*() =
     discard cunsetenv("SUDO_UID")
     discard cunsetenv("SUDO_GID")
     discard cunsetenv("PKEXEC_UID")
+
+    return true
+  else:
+    return true
 
 var intSigact: SigAction
 intSigact.sa_handler = SIG_DFL

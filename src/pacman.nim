@@ -356,8 +356,10 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
     x <- y.split(',')), string].toSet
 
   let hasKeyserver = forkWaitRedirect(() => (block:
-    dropPrivileges()
-    execResult(gpgConfCmd, "--list-options", "gpg")))
+    if dropPrivileges():
+      execResult(gpgConfCmd, "--list-options", "gpg")
+    else:
+      quit(1)))
     .output
     .filter(s => s.len > 10 and s[0 .. 9] == "keyserver:" and not (s[^2] == ':'))
     .len > 0

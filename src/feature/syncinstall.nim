@@ -240,6 +240,17 @@ proc printUnsatisfied(config: Config,
               trp("unable to satisfy dependency '%s' required by %s\n") %
               [$reference, pkgInfo.name])
 
+template dropPrivilegesAndChdir(path: Option[string], body: untyped): int =
+  if dropPrivileges():
+    if path.isNone or chdir(path.unsafeGet) == 0:
+      body
+    else:
+      printError(config.color, tr"chdir failed: $#" % [path.unsafeGet])
+      quit(1)
+  else:
+    printError(config.color, tr"failed to drop privileges")
+    quit(1)
+
 proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[string],
   defaultYes: bool, noconfirm: bool): char =
   proc editFileLoop(file: string): char =
@@ -266,25 +277,25 @@ proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[
       if editor.strip.len == 0:
         'n'
       else:
-        discard forkWait(proc: int =
-          discard chdir(buildPath(repoPath, gitSubdir))
-          dropPrivileges()
-          execResult(bashCmd, "-c", """$1 "$2"""", "bash", editor, file))
+        discard forkWait(() => (block:
+          let buildPath = buildPath(repoPath, gitSubdir)
+          dropPrivilegesAndChdir(some(buildPath)):
+            execResult(bashCmd, "-c", """$1 "$2"""", "bash", editor, file)))
         editFileLoop(file)
     else:
       res
 
   let rawFiles = if gitSubdir.isSome:
       forkWaitRedirect(() => (block:
-        dropPrivileges()
-        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
-          gitSubdir.unsafeGet & "/")))
+        dropPrivilegesAndChdir(none(string)):
+          execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
+            gitSubdir.unsafeGet & "/")))
         .output
         .map(s => s[gitSubdir.unsafeGet.len + 1 .. ^1])
     else:
       forkWaitRedirect(() => (block:
-        dropPrivileges()
-        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")))
+        dropPrivilegesAndChdir(none(string)):
+          execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")))
         .output
 
   let files = ("PKGBUILD" & rawFiles.filter(x => x != ".SRCINFO")).deduplicate
@@ -338,20 +349,18 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
     let envExt = getEnv("PKGEXT")
     let confExt = if envExt.len == 0:
         forkWaitRedirect(() => (block:
-          dropPrivileges()
-          execResult(bashCmd, "-c",
-            "source \"$@\" && echo \"$PKGEXT\"",
-            "bash", workConfFile)))
+          dropPrivilegesAndChdir(none(string)):
+            execResult(bashCmd, "-c",
+              "source \"$@\" && echo \"$PKGEXT\"",
+              "bash", workConfFile)))
           .output.optFirst.get("")
       else:
         envExt
 
     let (buildCode, interrupted) = catchInterrupt():
       forkWait(proc: int =
-        if chdir(buildPath) == 0:
-          discard cunsetenv("MAKEPKG_CONF")
-          dropPrivileges()
-
+        discard cunsetenv("MAKEPKG_CONF")
+        dropPrivilegesAndChdir(some(buildPath)):
           if not noextract:
             removeDirQuiet(buildPath & "src")
 
@@ -361,9 +370,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
           ]
 
           execResult(@[makepkgCmd, "--config", workConfFile, "-f"] &
-            optional.filter(o => o.cond).map(o => o.arg))
-        else:
-          quit(1))
+            optional.filter(o => o.cond).map(o => o.arg)))
 
     discard unlink(workConfFile)
 
@@ -450,9 +457,8 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       printColon(config.color, tr"Running pre-build command...")
 
       let code = forkWait(() => (block:
-        discard chdir(buildPath(repoPath, gitSubdir))
-        dropPrivileges()
-        execResult(bashCmd, "-c", config.preBuildCommand.unsafeGet)))
+        dropPrivilegesAndChdir(some(buildPath(repoPath, gitSubdir))):
+          execResult(bashCmd, "-c", config.preBuildCommand.unsafeGet)))
 
       if code != 0 and printColonUserChoice(config.color,
         tr"Command failed, continue?", ['y', 'n'], 'n', 'n',
@@ -665,8 +671,8 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                       discard open("/dev/null")
                       discard close(2)
                       discard open("/dev/null")
-                      dropPrivileges()
-                      execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
+                      dropPrivilegesAndChdir(none(string)):
+                        execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
                       keysLoop(index + 1, skipKeys)
                     else:
                       let res = if skipKeys:
@@ -684,14 +690,14 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
                         keysLoop(index, newSkipKeys)
                       elif res == 'y' or newSkipKeys:
                         let importCode = forkWait(() => (block:
-                          dropPrivileges()
-                          if config.pgpKeyserver.isSome:
-                            forkWait(() => execResult(gpgCmd,
-                              "--keyserver", config.pgpKeyserver.unsafeGet,
-                              "--recv-keys", pgpKeys[index]))
-                          else:
-                            forkWait(() => execResult(gpgCmd,
-                              "--recv-keys", pgpKeys[index]))))
+                          dropPrivilegesAndChdir(none(string)):
+                            if config.pgpKeyserver.isSome:
+                              forkWait(() => execResult(gpgCmd,
+                                "--keyserver", config.pgpKeyserver.unsafeGet,
+                                "--recv-keys", pgpKeys[index]))
+                            else:
+                              forkWait(() => execResult(gpgCmd,
+                                "--recv-keys", pgpKeys[index]))))
 
                         if importCode == 0 or newSkipKeys or noconfirm:
                           keysLoop(index + 1, newSkipKeys)
