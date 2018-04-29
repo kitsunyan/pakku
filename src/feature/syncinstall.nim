@@ -635,6 +635,134 @@ proc resolveDependencies(config: Config, pacmanTargets: seq[FullPackageTarget[Pa
 
     (true, satisfied, additionalPacmanTargets, orderedPkgInfos, paths)
 
+proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageInfo]]],
+  installed: seq[Installed], noconfirm: bool): int =
+  if basePackages.len > 0: (block:
+    let installedVersions = installed.map(i => (i.name, i.version)).toTable
+
+    printPackages(config.color, config.verbosePkgList,
+      lc[(i.name, i.repo, installedVersions.opt(i.name), i.version) |
+        (g <- basePackages, b <- g, i <- b), PackageInstallFormat]
+        .sorted((a, b) => cmp(a.name, b.name)))
+    let input = printColonUserChoice(config.color,
+      tr"Proceed with building?", ['y', 'n'], 'y', 'n', noconfirm, 'y')
+
+    if input == 'y':
+      let flatBasePackages = lc[x | (a <- basePackages, x <- a), seq[PackageInfo]]
+
+      proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
+        if index < flatBasePackages.len:
+          let pkgInfos = flatBasePackages[index]
+          let base = pkgInfos[0].base
+          let repoPath = repoPath(config.tmpRoot, base)
+
+          let aur = pkgInfos[0].repo == "aur"
+
+          if not skipEdit and aur and not noconfirm and config.aurComments:
+            echo(tr"downloading comments from AUR...")
+            let (comments, error) = downloadAurComments(base)
+            for e in error: printError(config.color, e)
+            if comments.len > 0:
+              let commentsReversed = toSeq(comments.reversed)
+              printComments(config.color, pkgInfos[0].maintainer, commentsReversed)
+
+          let editRes = if skipEdit or noconfirm:
+              'n'
+            else: (block:
+              let defaultYes = aur and not config.viewNoDefault
+              editLoop(config, base, repoPath, pkgInfos[0].gitSubdir, defaultYes, noconfirm))
+
+          if editRes == 'a':
+            1
+          else:
+            let resultPkgInfos = reloadPkgInfos(config,
+              repoPath & "/" & pkgInfos[0].gitSubdir.get("."), pkgInfos)
+            let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
+
+            proc keysLoop(index: int, skipKeys: bool): char =
+              if index >= pgpKeys.len:
+                'n'
+              elif forkWait(() => (block:
+                discard close(0)
+                discard open("/dev/null")
+                discard close(1)
+                discard open("/dev/null")
+                discard close(2)
+                discard open("/dev/null")
+                dropPrivilegesAndChdir(none(string)):
+                  execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
+                keysLoop(index + 1, skipKeys)
+              else:
+                let res = if skipKeys:
+                    'y'
+                  else:
+                    printColonUserChoice(config.color,
+                      tr"Import PGP key $#?" % [pgpKeys[index]], ['y', 'n', 'c', 'a', '?'],
+                      'y', '?', noconfirm, 'y')
+
+                let newSkipKeys = skipKeys or res == 'c'
+
+                if res == '?':
+                  printUserInputHelp(('c', tr"import all keys"),
+                    ('a', tr"abort operation"))
+                  keysLoop(index, newSkipKeys)
+                elif res == 'y' or newSkipKeys:
+                  let importCode = forkWait(() => (block:
+                    dropPrivilegesAndChdir(none(string)):
+                      if config.pgpKeyserver.isSome:
+                        forkWait(() => execResult(gpgCmd,
+                          "--keyserver", config.pgpKeyserver.unsafeGet,
+                          "--recv-keys", pgpKeys[index]))
+                      else:
+                        forkWait(() => execResult(gpgCmd,
+                          "--recv-keys", pgpKeys[index]))))
+
+                  if importCode == 0 or newSkipKeys or noconfirm:
+                    keysLoop(index + 1, newSkipKeys)
+                  else:
+                    keysLoop(index, newSkipKeys)
+                elif res == 'n':
+                  keysLoop(index + 1, newSkipKeys)
+                else:
+                  res
+
+            let keysRes = keysLoop(0, skipKeys)
+            if keysRes == 'a':
+              1
+            else:
+              checkNext(index + 1, skipEdit or editRes == 's', skipKeys or keysRes == 's')
+        else:
+          0
+
+      checkNext(0, false, false)
+    else:
+      1)
+  else:
+    0
+
+proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
+  unrequired: HashSet[string], unrequiredOptional: HashSet[string]): int =
+  if unrequired.len > 0 or unrequiredOptional.len > 0: (block:
+    let code = if unrequired.len > 0: (block:
+        printColon(config.color, tr"Removing build dependencies...")
+        pacmanRun(true, config.color, commonArgs &
+          ("R", none(string), ArgumentType.short) &
+          toSeq(unrequired.items).map(t =>
+            (t, none(string), ArgumentType.target))))
+      else:
+        0
+
+    if code == 0 and unrequiredOptional.len > 0:
+      printColon(config.color, tr"Removing optional build dependencies...")
+      pacmanRun(true, config.color, commonArgs &
+        ("R", none(string), ArgumentType.short) &
+        toSeq(unrequiredOptional.items).map(t =>
+          (t, none(string), ArgumentType.target)))
+    else:
+      code)
+  else:
+    0
+
 proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
   pacmanTargets: seq[FullPackageTarget[PackageInfo]], pkgInfos: seq[PackageInfo],
@@ -658,114 +786,14 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
         false, directSome, noaur)
     let paths = initialPaths & dependencyPaths
 
-    let confirmAndCloneCode = if resolveSuccess and basePackages.len > 0: (block:
-        let installedVersions = installed.map(i => (i.name, i.version)).toTable
-
-        printPackages(config.color, config.verbosePkgList,
-          lc[(i.name, i.repo, installedVersions.opt(i.name), i.version) |
-            (g <- basePackages, b <- g, i <- b), PackageInstallFormat]
-            .sorted((a, b) => cmp(a.name, b.name)))
-        let input = printColonUserChoice(config.color,
-          tr"Proceed with building?", ['y', 'n'], 'y', 'n', noconfirm, 'y')
-
-        if input == 'y':
-          let flatBasePackages = lc[x | (a <- basePackages, x <- a), seq[PackageInfo]]
-
-          proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
-            if index < flatBasePackages.len:
-              let pkgInfos = flatBasePackages[index]
-              let base = pkgInfos[0].base
-              let repoPath = repoPath(config.tmpRoot, base)
-
-              let aur = pkgInfos[0].repo == "aur"
-
-              if not skipEdit and aur and not noconfirm and config.aurComments:
-                echo(tr"downloading comments from AUR...")
-                let (comments, error) = downloadAurComments(base)
-                for e in error: printError(config.color, e)
-                if comments.len > 0:
-                  let commentsReversed = toSeq(comments.reversed)
-                  printComments(config.color, pkgInfos[0].maintainer, commentsReversed)
-
-              let editRes = if skipEdit or noconfirm:
-                  'n'
-                else: (block:
-                  let defaultYes = aur and not config.viewNoDefault
-                  editLoop(config, base, repoPath, pkgInfos[0].gitSubdir, defaultYes, noconfirm))
-
-              if editRes == 'a':
-                1
-              else:
-                let resultPkgInfos = reloadPkgInfos(config,
-                  repoPath & "/" & pkgInfos[0].gitSubdir.get("."), pkgInfos)
-                let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
-
-                proc keysLoop(index: int, skipKeys: bool): char =
-                  if index >= pgpKeys.len:
-                    'n'
-                  elif forkWait(() => (block:
-                    discard close(0)
-                    discard open("/dev/null")
-                    discard close(1)
-                    discard open("/dev/null")
-                    discard close(2)
-                    discard open("/dev/null")
-                    dropPrivilegesAndChdir(none(string)):
-                      execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
-                    keysLoop(index + 1, skipKeys)
-                  else:
-                    let res = if skipKeys:
-                        'y'
-                      else:
-                        printColonUserChoice(config.color,
-                          tr"Import PGP key $#?" % [pgpKeys[index]], ['y', 'n', 'c', 'a', '?'],
-                          'y', '?', noconfirm, 'y')
-
-                    let newSkipKeys = skipKeys or res == 'c'
-
-                    if res == '?':
-                      printUserInputHelp(('c', tr"import all keys"),
-                        ('a', tr"abort operation"))
-                      keysLoop(index, newSkipKeys)
-                    elif res == 'y' or newSkipKeys:
-                      let importCode = forkWait(() => (block:
-                        dropPrivilegesAndChdir(none(string)):
-                          if config.pgpKeyserver.isSome:
-                            forkWait(() => execResult(gpgCmd,
-                              "--keyserver", config.pgpKeyserver.unsafeGet,
-                              "--recv-keys", pgpKeys[index]))
-                          else:
-                            forkWait(() => execResult(gpgCmd,
-                              "--recv-keys", pgpKeys[index]))))
-
-                      if importCode == 0 or newSkipKeys or noconfirm:
-                        keysLoop(index + 1, newSkipKeys)
-                      else:
-                        keysLoop(index, newSkipKeys)
-                    elif res == 'n':
-                      keysLoop(index + 1, newSkipKeys)
-                    else:
-                      res
-
-                let keysRes = keysLoop(0, skipKeys)
-                if keysRes == 'a':
-                  1
-                else:
-                  checkNext(index + 1, skipEdit or editRes == 's', skipKeys or keysRes == 's')
-            else:
-              0
-
-          checkNext(0, false, false)
-        else:
-          1)
-      elif resolveSuccess:
-        0
+    let confirmAndResolveCode = if resolveSuccess:
+        confirmViewAndImportKeys(config, basePackages, installed, noconfirm)
       else:
         1
 
-    if confirmAndCloneCode != 0:
+    if confirmAndResolveCode != 0:
       clearPaths(paths)
-      confirmAndCloneCode
+      confirmAndResolveCode
     else:
       let (_, initialUnrequired, initialUnrequiredWithoutOptional) = withAlpm(config.root,
         config.db, newSeq[string](), config.arch, handle, dbs, errors):
@@ -832,27 +860,8 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
             let unrequiredOptional = finalUnrequiredWithoutOptional -
               initialUnrequiredWithoutOptional - unrequired
 
-            let removeCode = if unrequired.len > 0 or unrequiredOptional.len > 0: (block:
-                let code = if unrequired.len > 0: (block:
-                    printColon(config.color, tr"Removing build dependencies...")
-                    pacmanRun(true, config.color, commonArgs &
-                      ("R", none(string), ArgumentType.short) &
-                      toSeq(unrequired.items).map(t =>
-                        (t, none(string), ArgumentType.target))))
-                  else:
-                    0
-
-                if code == 0 and unrequiredOptional.len > 0:
-                  printColon(config.color, tr"Removing optional build dependencies...")
-                  pacmanRun(true, config.color, commonArgs &
-                    ("R", none(string), ArgumentType.short) &
-                    toSeq(unrequiredOptional.items).map(t =>
-                      (t, none(string), ArgumentType.target)))
-                else:
-                  code)
-              else:
-                0
-
+            let removeCode = removeBuildDependencies(config,
+              commonArgs, unrequired, unrequiredOptional)
             if removeCode != 0:
               removeCode
             else:
