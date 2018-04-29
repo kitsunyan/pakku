@@ -32,7 +32,7 @@ proc passValidation(args: seq[Argument], config: Config,
 
 proc handleDatabase(args: seq[Argument], config: Config): int =
   let nonRootArgs = [
-    (some("k"), "check")
+    %%%"check"
   ]
 
   passValidation(args, config, nonRootArgs, [],
@@ -40,7 +40,7 @@ proc handleDatabase(args: seq[Argument], config: Config): int =
 
 proc handleFiles(args: seq[Argument], config: Config): int =
   let rootArgs = [
-    (some("y"), "refresh")
+    %%%"refresh"
   ]
 
   passValidation(args, config, [], rootArgs,
@@ -50,9 +50,9 @@ proc handleQuery(args: seq[Argument], config: Config): int =
   let queryArgs = args.removeMatchOptions(commonOptions)
 
   if queryArgs.checkOpGroup(OpGroup.localQuery) and
-    not queryArgs.check((some("e"), "explicit")) and
-    queryArgs.check((some("d"), "deps")) and
-    queryArgs.count((some("t"), "unrequired")) >= 3:
+    not queryArgs.check(%%%"explicit") and
+    queryArgs.check(%%%"deps") and
+    queryArgs.count(%%%"unrequired") >= 3:
     handleQueryOrphans(args, config)
   else:
     passValidation(args, config, [], [],
@@ -60,8 +60,8 @@ proc handleQuery(args: seq[Argument], config: Config): int =
 
 proc handleRemove(args: seq[Argument], config: Config): int =
   let nonRootArgs = [
-    (some("p"), "print"),
-    (none(string), "print-format")
+    %%%"print",
+    %%%"print-format"
   ]
 
   passValidation(args, config, nonRootArgs, [],
@@ -76,15 +76,15 @@ proc handleSync(args: seq[Argument], config: Config): int =
     printError(config.color, trp("invalid option: '%s' and '%s' may not be used together\n") %
       ["--" & left, "--" & right])
     1
-  elif syncArgs.check((some("i"), "info")) and
+  elif syncArgs.check(%%%"info") and
     syncArgs.checkOpGroup(OpGroup.syncQuery):
     handleSyncInfo(args, config)
-  elif syncArgs.check((some("s"), "search")) and
+  elif syncArgs.check(%%%"search") and
     syncArgs.checkOpGroup(OpGroup.syncSearch):
     handleSyncSearch(args, config)
   elif syncArgs.checkOpGroup(OpGroup.syncInstall) and
-    (args.check((some("u"), "sysupgrade")) or args.targets.len > 0):
-    let printMode = args.check((some("p"), "print")) or args.check((none(string), "print-format"))
+    (args.check(%%%"sysupgrade") or args.targets.len > 0):
+    let printMode = args.check(%%%"print") or args.check(%%%"print-format")
 
     if currentUser.uid != 0 and config.sudoExec and not printMode:
       let collectedArgs = @[sudoCmd, getAppFilename()] &
@@ -92,11 +92,11 @@ proc handleSync(args: seq[Argument], config: Config): int =
       execResult(collectedArgs)
     else:
       let isNonDefaultRoot = not config.isRootDefault
-      let isSkipDeps = args.check((some("d"), "nodeps"))
+      let isSkipDeps = args.check(%%%"nodeps")
       let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
-      let build = args.check((none(string), "build"))
-      let noaur = args.check((none(string), "noaur"))
+      let build = args.check(%%%"build")
+      let noaur = args.check(%%%"noaur")
 
       let noBuild = isNonDefaultRoot or isSkipDeps or isRootNoDrop
 
@@ -131,16 +131,16 @@ proc handleSync(args: seq[Argument], config: Config): int =
           handleSyncInstall(args, config)
   else:
     let nonRootArgs = [
-      (some("p"), "print"),
-      (none(string), "print-format"),
-      (some("g"), "groups"),
-      (some("i"), "info"),
-      (some("l"), "list"),
-      (some("s"), "search")
+      %%%"print",
+      %%%"print-format",
+      %%%"groups",
+      %%%"info",
+      %%%"list",
+      %%%"search"
     ]
 
     let rootArgs = [
-      (some("y"), "refresh"),
+      %%%"refresh"
     ]
 
     passValidation(args, config, nonRootArgs, rootArgs,
@@ -151,8 +151,8 @@ proc handleDeptest(args: seq[Argument], config: Config): int =
 
 proc handleUpgrade(args: seq[Argument], config: Config): int =
   let nonRootArgs = [
-    (some("p"), "print"),
-    (none(string), "print-format")
+    %%%"print",
+    %%%"print-format"
   ]
 
   passValidation(args, config, nonRootArgs, [],
@@ -225,7 +225,7 @@ proc run(parsedArgs: seq[Argument], config: Config):
   withErrorHandler(some(config.color), int):
     let operation = getOperation(parsedArgs)
     if operation != OperationType.invalid and
-      parsedArgs.check((some("h"), "help")):
+      parsedArgs.check(%%%"help"):
       handleHelp(operation)
       0
     elif operation != OperationType.invalid and

@@ -7,7 +7,7 @@ import
 proc handleSyncSearch*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
 
-  let quiet = args.check((some("q"), "quiet"))
+  let quiet = args.check(%%%"quiet")
 
   let (aurPackages, aerrors) = findAurPackages(args.targets)
   for e in aerrors: printError(config.color, e)

@@ -1242,22 +1242,21 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
 proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
 
-  let upgradeCount = args.count((some("u"), "sysupgrade"))
-  let needed = args.check((none(string), "needed"))
-  let noaur = args.check((none(string), "noaur"))
-  let build = args.check((none(string), "build"))
+  let upgradeCount = args.count(%%%"sysupgrade")
+  let needed = args.check(%%%"needed")
+  let noaur = args.check(%%%"noaur")
+  let build = args.check(%%%"build")
 
-  let printModeArg = args.check((some("p"), "print"))
-  let printModeFormat = args.filter(arg => arg
-    .matchOption((none(string), "print-format"))).optLast
+  let printModeArg = args.check(%%%"print")
+  let printModeFormat = args.filter(arg => arg.matchOption(%%%"print-format")).optLast
   let printFormat = if printModeArg or printModeFormat.isSome:
       some(printModeFormat.map(arg => arg.value.get).get("%l"))
     else:
       none(string)
 
   let noconfirm = args
-    .filter(arg => arg.matchOption((none(string), "confirm")) or
-      arg.matchOption((none(string), "noconfirm"))).optLast
+    .filter(arg => arg.matchOption(%%%"confirm") or
+      arg.matchOption(%%%"noconfirm")).optLast
     .map(arg => arg.key == "noconfirm").get(false)
 
   let targets = args.packageTargets
@@ -1281,9 +1280,9 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
         .filter(i => not i.explicit).map(i => i.name).toSet
       let keepNames = foreignExplicitsNamesSet + foreignDepsNamesSet + targetNamesSet
 
-      let explicits = if args.check((none(string), "asexplicit")):
+      let explicits = if args.check(%%%"asexplicit"):
           targetNamesSet + foreignExplicitsNamesSet + foreignDepsNamesSet
-        elif args.check((none(string), "asdeps")):
+        elif args.check(%%%"asdeps"):
           initSet[string]()
         else:
           foreignExplicitsNamesSet + (targetNamesSet - foreignDepsNamesSet)

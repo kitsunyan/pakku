@@ -38,7 +38,7 @@ type
   ]
 
 proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: seq[Argument]] =
-  let refreshCount = args.count((some("y"), "refresh"))
+  let refreshCount = args.count(%%%"refresh")
   if refreshCount > 0:
     let code = pacmanRun(true, color, args
       .keepOnlyOptions(commonOptions, upgradeCommonOptions) &
@@ -46,7 +46,7 @@ proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: 
       ("y", none(string), ArgumentType.short).repeat(refreshCount))
 
     let callArgs = args
-      .filter(arg => not arg.matchOption((some("y"), "refresh")))
+      .filter(arg => not arg.matchOption(%%%"refresh"))
     (code, callArgs)
   else:
     (0, args)

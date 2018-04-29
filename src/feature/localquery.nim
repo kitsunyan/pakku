@@ -20,8 +20,8 @@ proc handleQueryOrphans*(args: seq[Argument], config: Config): int =
 
   if results.len > 0:
     let newArgs = args.filter(arg => not arg.isTarget and
-      not arg.matchOption((some("t"), "unrequired")) and
-      not arg.matchOption((some("d"), "deps"))) &
+      not arg.matchOption(%%%"unrequired") and
+      not arg.matchOption(%%%"deps")) &
       results.map(r => (r, none(string), ArgumentType.target))
     pacmanExec(false, config.color, newArgs)
   elif targets.len == 0:

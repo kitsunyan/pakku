@@ -239,6 +239,9 @@ proc checkOpGroup*(args: seq[Argument], group: OpGroup): bool =
 
   args.whitelisted(toCheck)
 
+proc `%%%`*(long: string): OptionPair =
+  allOptions.filter(o => o.pair.long == long)[0].pair
+
 proc filterExtensions*(args: seq[Argument],
   removeMatches: bool, keepTargets: bool): seq[Argument] =
   let argsSeq = lc[x.pair | (x <- allOptions, x.extension), OptionPair]
@@ -283,7 +286,7 @@ proc pacmanExec*(root: bool, color: bool, args: varargs[Argument]): int =
   let colorStr = if color: "always" else: "never"
 
   let argsSeq = ("color", some(colorStr), ArgumentType.long) &
-    @args.filter(arg => not arg.matchOption((none(string), "color")))
+    @args.filter(arg => not arg.matchOption(%%%"color"))
   let collectedArgs = lc[x | (y <- argsSeq, x <- y.collectArg), string]
 
   pacmanExec(useRoot, collectedArgs)
@@ -327,7 +330,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   proc getAll(pair: OptionPair): seq[string] =
     args.filter(arg => arg.matchOption(pair)).map(arg => arg.value.get)
 
-  let configFile = getAll((none(string), "config")).optLast.get(sysConfDir & "/pacman.conf")
+  let configFile = getAll(%%%"config").optLast.get(sysConfDir & "/pacman.conf")
   let (configTable, wasError) = readConfigFile(configFile)
 
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
@@ -341,18 +344,18 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
     let colors = toSeq(enumerate[ColorMode]())
     colors.filter(c => $c == color).optLast.get(ColorMode.colorNever)
 
-  let root = getAll((some("r"), "root")).optLast.orElse(defaultConfig.rootOption)
-  let db = getAll((some("b"), "dbpath")).optLast.orElse(defaultConfig.dbOption)
-  let gpg = getAll((none(string), "gpgdir")).optLast.orElse(defaultConfig.gpgOption)
-  let arch = getAll((none(string), "arch")).optLast.get(defaultConfig.arch)
-  let colorStr = getAll((none(string), "color")).optLast.get($defaultConfig.colorMode)
+  let root = getAll(%%%"root").optLast.orElse(defaultConfig.rootOption)
+  let db = getAll(%%%"dbpath").optLast.orElse(defaultConfig.dbOption)
+  let gpg = getAll(%%%"gpgdir").optLast.orElse(defaultConfig.gpgOption)
+  let arch = getAll(%%%"arch").optLast.get(defaultConfig.arch)
+  let colorStr = getAll(%%%"color").optLast.get($defaultConfig.colorMode)
   let color = getColor(colorStr)
 
-  let debug = args.check((none(string), "debug"))
-  let progressBar = not args.check((none(string), "noprogressbar"))
-  let ignorePkgs = lc[x | (y <- getAll((none(string), "ignore")),
+  let debug = args.check(%%%"debug")
+  let progressBar = not args.check(%%%"noprogressbar")
+  let ignorePkgs = lc[x | (y <- getAll(%%%"ignore"),
     x <- y.split(',')), string].toSet
-  let ignoreGroups = lc[x | (y <- getAll((none(string), "ignoregroups")),
+  let ignoreGroups = lc[x | (y <- getAll(%%%"ignoregroup"),
     x <- y.split(',')), string].toSet
 
   let hasKeyserver = forkWaitRedirect(() => (block:
@@ -367,7 +370,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let pgpKeyserver = if hasKeyserver:
       none(string)
     else: (block:
-      let argPgpKeyserver = getAll((none(string), "keyserver")).optLast
+      let argPgpKeyserver = getAll(%%%"keyserver").optLast
       if argPgpKeyserver.isSome:
         argPgpKeyserver
       else:
