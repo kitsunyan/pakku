@@ -32,6 +32,8 @@ type
     lastModified*: Option[int64]
     votes*: int
     popularity*: float
+    gitUrl*: string
+    gitSubdir*: Option[string]
 
   PackageInfo* = object of RpcPackageInfo
     baseIndex*: int
@@ -48,8 +50,6 @@ type
     provides*: seq[PackageReference]
     conflicts*: seq[PackageReference]
     replaces*: seq[PackageReference]
-    gitUrl*: string
-    gitSubdir*: Option[string]
 
   GitRepo* = tuple[
     url: string,
@@ -281,8 +281,8 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
     depends: depends, makeDepends: makeDepends, checkDepends: checkDepends,
     optional: optional, provides: provides, conflicts: conflicts, replaces: replaces,
     maintainer: info.map(i => i.maintainer).flatten,
-    firstSubmitted: info.map( i => i.firstSubmitted).flatten,
-    lastModified: info.map( i => i.lastModified).flatten,
+    firstSubmitted: info.map(i => i.firstSubmitted).flatten,
+    lastModified: info.map(i => i.lastModified).flatten,
     votes: info.map(i => i.votes).get(0),
     popularity: info.map(i => i.popularity).get(0),
     gitUrl: gitUrl, gitSubdir: gitSubdir) |

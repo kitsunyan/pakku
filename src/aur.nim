@@ -13,6 +13,9 @@ type
 const
   aurUrl* = "https://aur.archlinux.org/"
 
+template gitUrl(base: string): string =
+  aurUrl & base & ".git"
+
 proc parseRpcPackageInfo(obj: JsonNode): Option[RpcPackageInfo] =
   template optInt64(i: int64): Option[int64] =
     if i > 0: some(i) else: none(int64)
@@ -33,7 +36,7 @@ proc parseRpcPackageInfo(obj: JsonNode): Option[RpcPackageInfo] =
     some(RpcPackageInfo(repo: "aur", base: base, name: name, version: version,
       description: description, maintainer: maintainer,
       firstSubmitted: firstSubmitted, lastModified: lastModified,
-      votes: votes, popularity: popularity))
+      votes: votes, popularity: popularity, gitUrl: gitUrl(base), gitSubdir: none(string)))
   else:
     none(RpcPackageInfo)
 
@@ -51,7 +54,7 @@ proc obtainPkgBaseSrcInfo(base: string): (string, Option[string]) =
   except CurlError:
     ("", some(getCurrentException().msg))
 
-proc getRpcPackageInfo*(pkgs: seq[string]): (seq[RpcPackageInfo], Option[string]) =
+proc getRpcPackageInfos*(pkgs: seq[string]): (seq[RpcPackageInfo], Option[string]) =
   if pkgs.len == 0:
     (@[], none(string))
   else:
@@ -73,21 +76,16 @@ proc getRpcPackageInfo*(pkgs: seq[string]): (seq[RpcPackageInfo], Option[string]
       except JsonParsingError:
         (@[], some(tr"failed to parse server response"))
 
-proc getAurPackageInfo*(pkgs: seq[string], rpcInfosOption: Option[seq[RpcPackageInfo]],
-  arch: string, progressCallback: (int, int) -> void): (seq[PackageInfo], seq[string]) =
+proc getAurPackageInfos*(pkgs: seq[string], arch: string):
+  (seq[PackageInfo], seq[PackageInfo], seq[string]) =
   if pkgs.len == 0:
-    (@[], @[])
+    (@[], @[], @[])
   else:
     withAur():
-      progressCallback(0, pkgs.len)
-
-      let (rpcInfos, error) = if rpcInfosOption.isSome:
-          (rpcInfosOption.unsafeGet, none(string))
-        else:
-          getRpcPackageInfo(pkgs)
+      let (rpcInfos, error) = getRpcPackageInfos(pkgs)
 
       if error.isSome:
-        (@[], @[error.unsafeGet])
+        (@[], @[], @[error.unsafeGet])
       else:
         type
           ParseResult = tuple[
@@ -96,17 +94,15 @@ proc getAurPackageInfo*(pkgs: seq[string], rpcInfosOption: Option[seq[RpcPackage
           ]
 
         let deduplicated = lc[x.base | (x <- rpcInfos), string].deduplicate
-        progressCallback(0, deduplicated.len)
 
         proc obtainAndParse(base: string, index: int): ParseResult =
           let (srcInfo, operror) = obtainPkgBaseSrcInfo(base)
-          progressCallback(index + 1, deduplicated.len)
 
           if operror.isSome:
             (@[], operror)
           else:
             let pkgInfos = parseSrcInfo("aur", srcInfo, arch,
-              aurUrl & base & ".git", none(string), rpcInfos)
+              gitUrl(base), none(string), rpcInfos)
             (pkgInfos, none(string))
 
         let parsed = deduplicated.foldl(a & obtainAndParse(b, a.len), newSeq[ParseResult]())
@@ -114,7 +110,12 @@ proc getAurPackageInfo*(pkgs: seq[string], rpcInfosOption: Option[seq[RpcPackage
         let errors = lc[x | (y <- parsed, x <- y.error), string]
 
         let table = infos.map(i => (i.name, i)).toTable
-        (lc[x | (p <- pkgs, x <- table.opt(p)), PackageInfo], errors)
+        let pkgInfos = lc[x | (p <- pkgs, x <- table.opt(p)), PackageInfo]
+
+        let names = rpcInfos.map(i => i.name).toSet
+        let additionalPkgInfos = infos.filter(i => not (i.name in names))
+
+        (pkgInfos, additionalPkgInfos, errors)
 
 proc findAurPackages*(query: seq[string]): (seq[RpcPackageInfo], Option[string]) =
   if query.len == 0 or query[0].len <= 2:

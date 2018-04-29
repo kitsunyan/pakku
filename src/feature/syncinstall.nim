@@ -37,6 +37,20 @@ type
 proc groupsSeq(pkg: ptr AlpmPackage): seq[string] =
   toSeq(pkg.groups.items).map(s => $s)
 
+proc createCloneProgress(config: Config, count: int, printMode: bool):
+  (proc (update: int, terminate: int) {.closure.}, proc {.closure.}) =
+  if count >= 1 and not printMode:
+    let (update, terminate) = printProgressShare(config.progressBar, tr"cloning repositories")
+    update(0, count)
+
+    proc cloneUpdate(progress: int, newCount: int) {.closure.} =
+      # newCount can be < count if some packages were not found
+      update(max(count - newCount + progress, 0), count)
+
+    (cloneUpdate, terminate)
+  else:
+    (proc (a: int, b: int) {.closure.} = discard, proc {.closure.} = discard)
+
 proc orderInstallation(ordered: seq[seq[seq[PackageInfo]]], grouped: seq[seq[PackageInfo]],
   satisfied: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
   let orderedNamesSet = lc[c.name | (a <- ordered, b <- a, c <- b), string].toSet
@@ -75,8 +89,9 @@ proc orderInstallation(pkgInfos: seq[PackageInfo],
 
 proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
-  totalAurFail: seq[PackageReference], printMode: bool, noaur: bool):
-  (Table[PackageReference, SatisfyResult], seq[PackageReference]) =
+  totalAurFail: seq[PackageReference], additionalPkgInfos: seq[PackageInfo], paths: seq[string],
+  printMode: bool, noaur: bool): (Table[PackageReference, SatisfyResult],
+  seq[PackageReference], seq[string]) =
   proc checkDependencyCycle(pkgInfo: PackageInfo, reference: PackageReference): bool =
     for checkReference in pkgInfo.allDepends:
       if checkReference == reference:
@@ -97,6 +112,16 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
           if reference.isProvidedBy(provides) and
             checkDependencyCycle(pkgInfo, reference):
             return some(pkgInfo)
+    return none(PackageInfo)
+
+  proc findInAdditional(reference: PackageReference): Option[PackageInfo] =
+    for pkgInfo in additionalPkgInfos:
+      if reference.isProvidedBy(pkgInfo.toPackageReference):
+        return some(pkgInfo)
+      for provides in pkgInfo.provides:
+        if reference.isProvidedBy(provides) and
+          checkDependencyCycle(pkgInfo, reference):
+          return some(pkgInfo)
     return none(PackageInfo)
 
   proc findInDatabaseWithGroups(db: ptr AlpmDatabase, reference: PackageReference,
@@ -141,11 +166,15 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
       if pkgInfo.isSome:
         some((false, pkgInfo.unsafeGet.name, pkgInfo))
       else:
-        let syncName = findInDatabases(reference, false, true)
-        if syncName.isSome:
-          some((false, syncName.unsafeGet, none(PackageInfo)))
+        let pkgInfo = findInAdditional(reference)
+        if pkgInfo.isSome:
+          some((false, pkgInfo.unsafeGet.name, pkgInfo))
         else:
-          none(SatisfyResult)
+          let syncName = findInDatabases(reference, false, true)
+          if syncName.isSome:
+            some((false, syncName.unsafeGet, none(PackageInfo)))
+          else:
+            none(SatisfyResult)
 
   type ReferenceResult = tuple[reference: PackageReference, result: Option[SatisfyResult]]
 
@@ -154,16 +183,23 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
   let aurCheck = findResult.filter(r => r.result.isNone).map(r => r.reference)
     .filter(r => not (r in totalAurFail))
 
-  let (aurSuccess, aurFail) = if not noaur and aurCheck.len > 0: (block:
-      let (update, terminate) = if aurCheck.len >= 4 and not printMode:
-          printProgressShare(config.progressBar, tr"checking build dependencies")
-        else:
-          (proc (a: int, b: int) {.closure.} = discard, proc {.closure.} = discard)
+  let (aurSuccess, aurFail, newPaths, newAdditionalPkgInfos) =
+    if not noaur and aurCheck.len > 0: (block:
+      let (update, terminate) = createCloneProgress(config, aurCheck.len, printMode)
       try:
         withAur():
-          let (pkgInfos, aerrors) = getAurPackageInfo(aurCheck.map(r => r.name),
-            none(seq[RpcPackageInfo]), config.arch, update)
-          for e in aerrors: printError(config.color, e)
+          let (pkgInfos, additionalPkgInfos, paths) = if printMode: (block:
+              let (pkgInfos, additionalPkgInfos, aerrors) =
+                getAurPackageInfos(aurCheck.map(r => r.name), config.arch)
+              for e in aerrors: printError(config.color, e)
+              (pkgInfos, additionalPkgInfos, newSeq[string]()))
+            else: (block:
+              let (rpcInfos, aerrors) = getRpcPackageInfos(aurCheck.map(r => r.name))
+              for e in aerrors: printError(config.color, e)
+              let (pkgInfos, additionalPkgInfos, paths, cerrors) =
+                cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update)
+              for e in cerrors: printError(config.color, e)
+              (pkgInfos, additionalPkgInfos, paths))
 
           let acceptedPkgInfos = pkgInfos.filter(i => not config.ignored(i.name, i.groups))
           let aurTable = acceptedPkgInfos.map(i => (i.name, i)).toTable
@@ -175,11 +211,11 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
 
           let aurSuccess = aurResult.filter(r => r.result.isSome)
           let aurFail = aurResult.filter(r => r.result.isNone).map(r => r.reference)
-          (aurSuccess, aurFail)
+          (aurSuccess, aurFail, paths, additionalPkgInfos)
       finally:
         terminate())
     else:
-      (@[], aurCheck)
+      (@[], aurCheck, @[], @[])
 
   let newSatisfied = (toSeq(satisfied.pairs) &
     success.map(r => (r.reference, r.result.unsafeGet)) &
@@ -193,18 +229,25 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
 
   if newUnsatisfied.len > 0:
     findDependencies(config, handle, dbs, newSatisfied, newTotalUnsatisfied, newTotalAurFail,
-      printMode, noaur)
+      additionalPkgInfos & newAdditionalPkgInfos, paths & newPaths, printMode, noaur)
   else:
     let finallyUnsatisfied = newTotalAurFail.filter(r => not newSatisfied.hasKey(r))
-    (newSatisfied, finallyUnsatisfied)
+    (newSatisfied, finallyUnsatisfied, paths & newPaths)
 
 proc findDependencies(config: Config, handle: ptr AlpmHandle,
-  dbs: seq[ptr AlpmDatabase], pkgInfos: seq[PackageInfo], printMode: bool, noaur: bool):
-  (Table[PackageReference, SatisfyResult], seq[PackageReference]) =
+  dbs: seq[ptr AlpmDatabase], pkgInfos: seq[PackageInfo],
+  additionalPkgInfos: seq[PackageInfo], printMode: bool, noaur: bool):
+  (Table[PackageReference, SatisfyResult], seq[PackageReference], seq[string]) =
   let satisfied = pkgInfos.map(p => ((p.name, none(string), none(VersionConstraint)),
     (false, p.name, some(p)))).toTable
   let unsatisfied = lc[x | (i <- pkgInfos, x <- i.allDepends), PackageReference].deduplicate
-  findDependencies(config, handle, dbs, satisfied, unsatisfied, @[], printMode, noaur)
+  findDependencies(config, handle, dbs, satisfied, unsatisfied, @[],
+    additionalPkgInfos, @[], printMode, noaur)
+
+template clearPaths(paths: untyped) =
+  for path in paths:
+    removeDirQuiet(path)
+  discard rmdir(config.tmpRoot)
 
 proc filterNotFoundSyncTargetsInternal(syncTargets: seq[SyncPackageTarget],
   pkgInfoReferencesTable: Table[string, PackageReference],
@@ -556,12 +599,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
   keepNames: HashSet[string], build: bool, directPacmanTargets: seq[string],
   additionalPacmanTargets: seq[string], basePackages: seq[seq[seq[PackageInfo]]],
-  buildPaths: seq[string]): int =
-  proc clearBuildPaths() =
-    for path in buildPaths:
-      removeDirQuiet(path)
-      discard rmdir(config.tmpRoot)
-
+  paths: seq[string]): int =
   let workDirectPacmanTargets = if build: @[] else: directPacmanTargets
 
   let (directCode, directSome) = if workDirectPacmanTargets.len > 0 or upgradeCount > 0:
@@ -571,19 +609,19 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
       (0, false)
 
   let directSatisfiedCode = if directCode == 0 and unsatisfied.len > 0: (block:
-      clearBuildPaths()
+      clearPaths(paths)
       printUnsatisfied(config, satisfied, unsatisfied)
       1)
     else:
       directCode
 
   if directSatisfiedCode != 0:
-    clearBuildPaths()
+    clearPaths(paths)
     directSatisfiedCode
   else:
     let commonArgs = args.keepOnlyOptions(commonOptions, upgradeCommonOptions)
 
-    let (paths, confirmAndCloneCode) = if basePackages.len > 0: (block:
+    let confirmAndCloneCode = if basePackages.len > 0: (block:
         let installedVersions = installed.map(i => (i.name, i.version)).toTable
 
         printPackages(config.color, config.verbosePkgList,
@@ -594,142 +632,100 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
           tr"Proceed with building?", ['y', 'n'], 'y', 'n', noconfirm, 'y')
 
         if input == 'y':
-          let buildPathsSet = buildPaths.toSet
-
-          let (update, terminate) = if config.debug:
-              (proc (a: int, b: int) {.closure.} = discard, proc {.closure.} = discard)
-            else:
-              printProgressShare(config.progressBar, tr"cloning repositories")
-
           let flatBasePackages = lc[x | (a <- basePackages, x <- a), seq[PackageInfo]]
-          update(0, flatBasePackages.len)
 
-          proc cloneNext(index: int, paths: List[string]): (List[string], int) =
+          proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
             if index < flatBasePackages.len:
               let pkgInfos = flatBasePackages[index]
               let base = pkgInfos[0].base
               let repoPath = repoPath(config.tmpRoot, base)
-              let (cloneCode, cloneErrorMessage) = if repoPath in buildPathsSet:
-                  (0, none(string))
+
+              let aur = pkgInfos[0].repo == "aur"
+
+              if not skipEdit and aur and not noconfirm and config.aurComments:
+                echo(tr"downloading comments from AUR...")
+                let (comments, error) = downloadAurComments(base)
+                for e in error: printError(config.color, e)
+                if comments.len > 0:
+                  let commentsReversed = toSeq(comments.reversed)
+                  printComments(config.color, pkgInfos[0].maintainer, commentsReversed)
+
+              let editRes = if skipEdit or noconfirm:
+                  'n'
                 else: (block:
-                  removeDirQuiet(repoPath)
-                  cloneAurRepo(config, flatBasePackages[index]))
+                  let defaultYes = aur and not config.viewNoDefault
+                  editLoop(config, base, repoPath, pkgInfos[0].gitSubdir, defaultYes, noconfirm))
 
-              if cloneCode == 0:
-                update(index + 1, flatBasePackages.len)
-                cloneNext(index + 1, repoPath ^& paths)
+              if editRes == 'a':
+                1
               else:
-                terminate()
-                for e in cloneErrorMessage: printError(config.color, e)
-                printError(config.color, tr"$#: failed to clone git repository" %
-                  [pkgInfos[0].base])
-                ((repoPath ^& paths).reversed, cloneCode)
-            else:
-              terminate()
-              (paths.reversed, 0)
+                let resultPkgInfos = reloadPkgInfos(config,
+                  repoPath & "/" & pkgInfos[0].gitSubdir.get("."), pkgInfos)
+                let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
 
-          let (paths, cloneCode) = cloneNext(0, nil)
-          if cloneCode != 0:
-            (paths, cloneCode)
-          else:
-            proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
-              if index < flatBasePackages.len:
-                let pkgInfos = flatBasePackages[index]
-                let base = pkgInfos[0].base
-                let repoPath = repoPath(config.tmpRoot, base)
-
-                let aur = pkgInfos[0].repo == "aur"
-
-                if not skipEdit and aur and not noconfirm and config.aurComments:
-                  echo(tr"downloading comments from AUR...")
-                  let (comments, error) = downloadAurComments(base)
-                  for e in error: printError(config.color, e)
-                  if comments.len > 0:
-                    let commentsReversed = toSeq(comments.reversed)
-                    printComments(config.color, pkgInfos[0].maintainer, commentsReversed)
-
-                let editRes = if skipEdit or noconfirm:
+                proc keysLoop(index: int, skipKeys: bool): char =
+                  if index >= pgpKeys.len:
                     'n'
-                  else: (block:
-                    let defaultYes = aur and not config.viewNoDefault
-                    editLoop(config, base, repoPath, pkgInfos[0].gitSubdir, defaultYes, noconfirm))
+                  elif forkWait(() => (block:
+                    discard close(0)
+                    discard open("/dev/null")
+                    discard close(1)
+                    discard open("/dev/null")
+                    discard close(2)
+                    discard open("/dev/null")
+                    dropPrivilegesAndChdir(none(string)):
+                      execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
+                    keysLoop(index + 1, skipKeys)
+                  else:
+                    let res = if skipKeys:
+                        'y'
+                      else:
+                        printColonUserChoice(config.color,
+                          tr"Import PGP key $#?" % [pgpKeys[index]], ['y', 'n', 'c', 'a', '?'],
+                          'y', '?', noconfirm, 'y')
 
-                if editRes == 'a':
-                  1
-                else:
-                  let resultPkgInfos = reloadPkgInfos(config,
-                    repoPath & "/" & pkgInfos[0].gitSubdir.get("."), pkgInfos)
-                  let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
+                    let newSkipKeys = skipKeys or res == 'c'
 
-                  proc keysLoop(index: int, skipKeys: bool): char =
-                    if index >= pgpKeys.len:
-                      'n'
-                    elif forkWait(() => (block:
-                      discard close(0)
-                      discard open("/dev/null")
-                      discard close(1)
-                      discard open("/dev/null")
-                      discard close(2)
-                      discard open("/dev/null")
-                      dropPrivilegesAndChdir(none(string)):
-                        execResult(gpgCmd, "--list-keys", pgpKeys[index]))) == 0:
-                      keysLoop(index + 1, skipKeys)
-                    else:
-                      let res = if skipKeys:
-                          'y'
-                        else:
-                          printColonUserChoice(config.color,
-                            tr"Import PGP key $#?" % [pgpKeys[index]], ['y', 'n', 'c', 'a', '?'],
-                            'y', '?', noconfirm, 'y')
+                    if res == '?':
+                      printUserInputHelp(('c', tr"import all keys"),
+                        ('a', tr"abort operation"))
+                      keysLoop(index, newSkipKeys)
+                    elif res == 'y' or newSkipKeys:
+                      let importCode = forkWait(() => (block:
+                        dropPrivilegesAndChdir(none(string)):
+                          if config.pgpKeyserver.isSome:
+                            forkWait(() => execResult(gpgCmd,
+                              "--keyserver", config.pgpKeyserver.unsafeGet,
+                              "--recv-keys", pgpKeys[index]))
+                          else:
+                            forkWait(() => execResult(gpgCmd,
+                              "--recv-keys", pgpKeys[index]))))
 
-                      let newSkipKeys = skipKeys or res == 'c'
-
-                      if res == '?':
-                        printUserInputHelp(('c', tr"import all keys"),
-                          ('a', tr"abort operation"))
-                        keysLoop(index, newSkipKeys)
-                      elif res == 'y' or newSkipKeys:
-                        let importCode = forkWait(() => (block:
-                          dropPrivilegesAndChdir(none(string)):
-                            if config.pgpKeyserver.isSome:
-                              forkWait(() => execResult(gpgCmd,
-                                "--keyserver", config.pgpKeyserver.unsafeGet,
-                                "--recv-keys", pgpKeys[index]))
-                            else:
-                              forkWait(() => execResult(gpgCmd,
-                                "--recv-keys", pgpKeys[index]))))
-
-                        if importCode == 0 or newSkipKeys or noconfirm:
-                          keysLoop(index + 1, newSkipKeys)
-                        else:
-                          keysLoop(index, newSkipKeys)
-                      elif res == 'n':
+                      if importCode == 0 or newSkipKeys or noconfirm:
                         keysLoop(index + 1, newSkipKeys)
                       else:
-                        res
+                        keysLoop(index, newSkipKeys)
+                    elif res == 'n':
+                      keysLoop(index + 1, newSkipKeys)
+                    else:
+                      res
 
-                  let keysRes = keysLoop(0, skipKeys)
-                  if keysRes == 'a':
-                    1
-                  else:
-                    checkNext(index + 1, skipEdit or editRes == 's', skipKeys or keysRes == 's')
-              else:
-                0
+                let keysRes = keysLoop(0, skipKeys)
+                if keysRes == 'a':
+                  1
+                else:
+                  checkNext(index + 1, skipEdit or editRes == 's', skipKeys or keysRes == 's')
+            else:
+              0
 
-            (paths, checkNext(0, false, false))
+          checkNext(0, false, false)
         else:
-          (nil, 1))
+          1)
       else:
-        (nil, 0)
-
-    proc clearPaths() =
-      for path in paths:
-        removeDirQuiet(path)
-      discard rmdir(config.tmpRoot)
+        0
 
     if confirmAndCloneCode != 0:
-      clearBuildPaths()
-      clearPaths()
+      clearPaths(paths)
       confirmAndCloneCode
     else:
       let (_, initialUnrequired, initialUnrequiredWithoutOptional) = withAlpm(config.root,
@@ -748,7 +744,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
           (0, false)
 
       if additionalCode != 0:
-        clearPaths()
+        clearPaths(paths)
         additionalCode
       else:
         if basePackages.len > 0:
@@ -770,7 +766,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
               x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
 
           if unsatisfied.len > 0:
-            clearPaths()
+            clearPaths(paths)
             printUnsatisfied(config, satisfied, unsatisfied)
             1
           else:
@@ -786,7 +782,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
             let (installedAs, code, index) = installNext(0, nil, 0)
             if code != 0 and index < basePackages.len - 1:
               printWarning(config.color, tr"installation aborted")
-            clearPaths()
+            clearPaths(paths)
 
             let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
             let (_, finalUnrequired, finalUnrequiredWithoutOptional) = withAlpm(config.root,
@@ -928,9 +924,9 @@ proc checkNeeded(installed: Table[string, Installed],
     (true, 0)
 
 proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
-  rpcAurTargets: seq[FullPackageTarget[RpcPackageInfo]],
-  installed: Table[string, Installed], printMode: bool, needed: bool,
-  upgradeCount: int): (seq[PackageInfo], seq[Installed], seq[LocalIsNewer], seq[string]) =
+  rpcAurTargets: seq[FullPackageTarget[RpcPackageInfo]], installed: Table[string, Installed],
+  printMode: bool, needed: bool, upgradeCount: int): (seq[PackageInfo], seq[PackageInfo],
+  seq[string], seq[Installed], seq[LocalIsNewer], seq[string]) =
   let targetRpcInfoPairs: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
     rpcAurTargets.map(t => t.pkgInfo.get).map(i => (i, installed
       .checkNeeded(i.name, i.version, true).needed))
@@ -969,14 +965,25 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   let upgradeRpcInfos = upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo)
   let fullRpcInfos = targetRpcInfos & upgradeRpcInfos
 
-  let (pkgInfos, errors) = getAurPackageInfo(fullRpcInfos.map(i => i.name),
-    some(fullRpcInfos), config.arch, proc (a: int, b: int) = discard)
+  let (update, terminate) = createCloneProgress(config, fullRpcInfos.len, printMode)
+
+  let (pkgInfos, additionalPkgInfos, paths, errors) = if printMode: (block:
+      let (pkgInfos, additionalPkgInfos, aerrors) =
+        getAurPackageInfos(fullRpcInfos.map(i => i.name), config.arch)
+      (pkgInfos, additionalPkgInfos, newSeq[string](), aerrors.deduplicate))
+    else: (block:
+      let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name))
+      let (pkgInfos, additionalPkgInfos, paths, cerrors) =
+        cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update)
+      (pkgInfos, additionalPkgInfos, paths, (toSeq(aerrors.items) & cerrors).deduplicate))
+
+  terminate()
 
   let localIsNewerSeq = upgradeStructs
     .filter(p => p.localIsNewer.isSome)
     .map(p => p.localIsNewer.unsafeGet)
 
-  (pkgInfos, upToDateNeeded, localIsNewerSeq, errors)
+  (pkgInfos, additionalPkgInfos, paths, upToDateNeeded, localIsNewerSeq, errors)
 
 proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
@@ -1048,7 +1055,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       if checkAurNamesFull.len > 0:
         echo(tr"checking AUR database...")
 
-    let (rpcInfos, rerrors) = getRpcPackageInfo(checkAurNamesFull)
+    let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNamesFull)
     for e in rerrors: printError(config.color, e)
 
     let rpcNotFoundTargets = filterNotFoundSyncTargets(syncTargets,
@@ -1068,8 +1075,9 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       let installedTable = installed.map(i => (i.name, i)).toTable
       let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos).filter(isAurTargetFull)
 
-      let (aurPkgInfos, upToDateNeeded, localIsNewerSeq, aperrors) = obtainAurPackageInfos(config,
-        rpcInfos, rpcAurTargets, installedTable, printFormat.isSome, needed, upgradeCount)
+      let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
+        obtainAurPackageInfos(config, rpcInfos, rpcAurTargets, installedTable,
+          printFormat.isSome, needed, upgradeCount)
       for e in aperrors: printError(config.color, e)
 
       let upToDateNeededTable = upToDateNeeded.map(i => (i.name,
@@ -1078,6 +1086,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
         aurPkgInfos, upToDateNeededTable)
 
       if notFoundTargets.len > 0:
+        clearPaths(aurPaths)
         printSyncNotFound(config, notFoundTargets)
         1
       else:
@@ -1113,12 +1122,18 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
 
         let (buildPkgInfos, buildPaths, obtainErrorMessages) = if checkPacmanPkgInfos: (block:
             echo(tr"checking official repositories...")
-            obtainBuildPkgInfos[PackageInfo](config, pacmanTargets))
+            let (update, terminate) = createCloneProgress(config,
+              pacmanTargets.len, printFormat.isSome)
+            let res = obtainBuildPkgInfos[PackageInfo](config, pacmanTargets, update)
+            terminate()
+            res)
           else:
             (@[], @[], @[])
 
         if checkPacmanPkgInfos and buildPkgInfos.len < pacmanTargets.len:
           # "--build" conflicts with "--sysupgrade", so it's ok to fail here
+          clearPaths(buildPaths)
+          clearPaths(aurPaths)
           for e in obtainErrorMessages: printError(config.color, e)
           1
         else:
@@ -1126,12 +1141,6 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
           let targetNamesSet = (pacmanTargets & aurTargets).map(t => t.reference.name).toSet
           let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
             targetNamesSet, installedTable, printFormat.isSome, noconfirm)
-
-          if finalPkgInfos.len > 0 and printFormat.isNone:
-            echo(trp("resolving dependencies...\n"))
-          let (satisfied, unsatisfied) = withAlpm(config.root, config.db,
-            config.dbs, config.arch, handle, dbs, errors):
-            findDependencies(config, handle, dbs, finalPkgInfos, printFormat.isSome, noaur)
 
           if printFormat.isNone:
             let acceptedSet = acceptedPkgInfos.map(i => i.name).toSet
@@ -1160,6 +1169,13 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
                     printWarning(config.color,
                       tra("%s: downgrading from version %s to version %s\n") %
                       [pkgInfo.name, installedVersion, newVersion])
+
+          if finalPkgInfos.len > 0 and printFormat.isNone:
+            echo(trp("resolving dependencies...\n"))
+          let (satisfied, unsatisfied, dependencyPaths) = withAlpm(config.root, config.db,
+            config.dbs, config.arch, handle, dbs, errors):
+            findDependencies(config, handle, dbs, finalPkgInfos, additionalPkgInfos,
+              printFormat.isSome, noaur)
 
           let buildAndAurNamesSet = finalPkgInfos.map(i => i.name).toSet
           let fullPkgInfos = (finalPkgInfos & lc[i | (s <- satisfied.values,
@@ -1194,4 +1210,4 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
             handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
               explicits, installed, satisfied, unsatisfied,
               keepNames, build, directPacmanTargets, additionalPacmanTargets,
-              orderedPkgInfos, buildPaths)
+              orderedPkgInfos, buildPaths & aurPaths & dependencyPaths)

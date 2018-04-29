@@ -1,6 +1,6 @@
 import
   future, options, os, osproc, posix, sequtils, sets, strutils, tables,
-  args, config, package, pacman, utils,
+  args, config, lists, package, pacman, utils,
   "wrapper/alpm"
 
 type
@@ -361,7 +361,8 @@ proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): 
     pkgInfos
 
 proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
-  pacmanTargetNames: seq[string]): (seq[PackageInfo], seq[string], seq[string]) =
+  pacmanTargetNames: seq[string], progressCallback: (int, int) -> void):
+  (seq[PackageInfo], seq[string], seq[string]) =
   let lookupResults: seq[LookupGitResult] = bases
     .map(b => (b, lookupGitRepo(b.repo, b.base, b.arch)))
   let notFoundRepos = lookupResults.filter(r => r.git.isNone)
@@ -409,9 +410,16 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
           removeDirQuiet(repoPath)
           (newSeq[PackageInfo](), none(string))
 
-      let pkgInfosWithPaths = lookupResults.map(r => findCommitAndGetSrcInfo(r.group.base,
-        r.group.version, r.group.repo, r.git.get))
+      progressCallback(0, lookupResults.len)
+      let (pkgInfosWithPathsReversed, _) = lookupResults.foldl(block:
+        let (list, index) = a
+        let res = findCommitAndGetSrcInfo(b.group.base, b.group.version,
+          b.group.repo, b.git.get) ^& list
+        progressCallback(index + 1, lookupResults.len)
+        (res, index + 1),
+        (list[tuple[pkgInfos: seq[PackageInfo], path: Option[string]]](), 0))
 
+      let pkgInfosWithPaths = pkgInfosWithPathsReversed.reversed
       let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
       let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
 
@@ -430,7 +438,7 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
       (foundPkgInfos, paths, errorMessages)
 
 proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
-  pacmanTargets: seq[FullPackageTarget[T]]):
+  pacmanTargets: seq[FullPackageTarget[T]], progressCallback: (int, int) -> void):
   (seq[PackageInfo], seq[string], seq[string]) =
   let bases = pacmanTargets
     .map(proc (target: FullPackageTarget[T]): LookupBaseGroup =
@@ -440,10 +448,9 @@ proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
     .deduplicate
 
   let pacmanTargetNames = pacmanTargets.map(t => t.reference.name)
-  obtainBuildPkgInfosInternal(config, bases, pacmanTargetNames)
+  obtainBuildPkgInfosInternal(config, bases, pacmanTargetNames, progressCallback)
 
-proc cloneAurRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option[string]) =
-  let base = basePackages[0].base
+proc cloneAurRepo*(config: Config, base: string, gitUrl: string): (int, Option[string]) =
   let repoPath = repoPath(config.tmpRoot, base)
 
   let message = ensureTmpOrError(config)
@@ -451,14 +458,63 @@ proc cloneAurRepo*(config: Config, basePackages: seq[PackageInfo]): (int, Option
     (1, message)
   elif repoPath.existsDir():
     (0, none(string))
-  elif basePackages[0].repo != "aur":
-    raise newException(SystemError, "invalid clone call")
   else:
     let cloneCode = forkWait(() => (block:
       if dropPrivileges():
         execResult(gitCmd, "-C", config.tmpRoot,
-          "clone", "-q", basePackages[0].gitUrl, "--single-branch", base)
+          "clone", "-q", gitUrl, "--single-branch", base)
       else:
         quit(1)))
 
-    (cloneCode, none(string))
+    if cloneCode != 0:
+      (cloneCode, some(tr"$#: failed to clone git repository" % [base]))
+    else:
+      (0, none(string))
+
+proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo],
+  keepRepos: bool, progressCallback: (int, int) -> void):
+  (seq[PackageInfo], seq[PackageInfo], seq[string], seq[string]) =
+  let bases: seq[tuple[base: string, gitUrl: string]] = rpcInfos
+    .map(i => (i.base, i.gitUrl)).deduplicate
+
+  progressCallback(0, bases.len)
+
+  proc cloneNext(index: int, pkgInfos: List[PackageInfo], paths: List[string],
+    errors: List[string]): (seq[PackageInfo], seq[string], seq[string]) =
+    if index >= bases.len:
+      (toSeq(pkgInfos.items), toSeq(paths.items), toSeq(errors.items))
+    else:
+      let repoPath = repoPath(config.tmpRoot, bases[index].base)
+      removeDirQuiet(repoPath)
+
+      let (cloneCode, cloneErrorMessage) = cloneAurRepo(config,
+        bases[index].base, bases[index].gitUrl)
+
+      progressCallback(index + 1, bases.len)
+
+      if cloneCode != 0:
+        removeDirQuiet(repoPath)
+        cloneNext(index + 1, pkgInfos, paths, cloneErrorMessage.map(m => m ^& errors).get(errors))
+      else:
+        let srcInfos = try:
+          readFile(repoPath & "/.SRCINFO")
+        except:
+          ""
+
+        let addPkgInfos = parseSrcInfo("aur", srcInfos, config.arch,
+          bases[index].gitUrl, none(string), rpcInfos)
+        if keepRepos:
+          cloneNext(index + 1, addPkgInfos ^& pkgInfos, repoPath ^& paths, errors)
+        else:
+          removeDirQuiet(repoPath)
+          cloneNext(index + 1, addPkgInfos ^& pkgInfos, paths, errors)
+
+  let (fullPkgInfos, paths, errors) = cloneNext(0, nil, nil, nil)
+  let pkgInfosTable = fullPkgInfos.map(i => (i.name, i)).toTable
+  let resultPkgInfos = lc[x | (y <- rpcInfos, x <- pkgInfosTable.opt(y.name)), PackageInfo]
+
+  let names = rpcInfos.map(i => i.name).toSet
+  let additionalPkgInfos = fullPkgInfos.filter(i => not (i.name in names))
+
+  discard rmdir(config.tmpRoot)
+  (resultPkgInfos, additionalPkgInfos, paths, errors)

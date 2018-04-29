@@ -108,8 +108,7 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
     for e in errors: printError(config.color, e)
     findSyncTargets(handle, dbs, targets, false, false)
 
-  let (pkgInfos, aerrors) = getAurPackageInfo(checkAurNames,
-    none(seq[RpcPackageInfo]), config.arch, proc (a: int, b: int) = discard)
+  let (pkgInfos, _, aerrors) = getAurPackageInfos(checkAurNames, config.arch)
   for e in aerrors: printError(config.color, e)
 
   let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos)
