@@ -27,7 +27,7 @@ Query Options (apply to '-Q')[[QO]]
 
 Sync Options (apply to '-S')[[SO]]
 ----------------------------------
-*\--build*::
+*-n, \--build*::
 	Build packages from source. Building is supported for directly specified
 	packages only, so it will not work for package groups or virtual packages.
 

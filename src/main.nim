@@ -159,12 +159,15 @@ proc handleUpgrade(args: seq[Argument], config: Config): int =
     commonOptions, transactionOptions, upgradeOptions)
 
 proc handleHelp(operation: OperationType) =
-  proc printHelp(command: string, text: string) =
-    if command.len > 14:
-      echo(' '.repeat(6), "--", command)
+  proc printHelp(pair: OptionPair, arg: Option[string], text: string) =
+    let shortPrefix = pair.short.map(s => "  -" & s & ", ").get(' '.repeat(6))
+    let longValue = arg.map(a => pair.long & " <" & a & ">").get(pair.long)
+
+    if longValue.len > 14:
+      echo(shortPrefix, "--", longValue)
       echo(' '.repeat(23), text)
     else:
-      echo(' '.repeat(6), "--", command, ' '.repeat(15 - command.len), text)
+      echo(shortPrefix, "--", longValue, ' '.repeat(15 - longValue.len), text)
 
   let operationArgs = operations
     .filter(o => o.otype == operation)
@@ -179,9 +182,9 @@ proc handleHelp(operation: OperationType) =
   if lines.len > 0:
     case operation:
       of OperationType.sync:
-        printHelp("build", tr"build targets from source")
-        printHelp("keyserver <name>", tr"use name as keyserver to receive keys from")
-        printHelp("noaur", tr"disable all AUR operations")
+        printHelp(%%%"build", none(string), tr"build targets from source")
+        printHelp(%%%"keyserver", some("name"), tr"use name as keyserver to receive keys from")
+        printHelp(%%%"noaur", none(string), tr"disable all AUR operations")
       else:
         discard
 

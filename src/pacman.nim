@@ -140,7 +140,7 @@ const
     o("u", "sysupgrade") + g(syncInstall),
     o("w", "downloadonly"),
     o("y", "refresh") + g(syncInstall, syncSearch, syncQuery),
-    $o("build") + g(syncInstall),
+    $o("n", "build") + g(syncInstall),
     $(^o("keyserver")) + g(syncInstall),
     $o("noaur") + g(syncInstall)
   ]
