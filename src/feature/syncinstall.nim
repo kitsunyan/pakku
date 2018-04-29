@@ -910,6 +910,60 @@ proc handlePrint(args: seq[Argument], config: Config, printFormat: string, upgra
   else:
     code
 
+proc printAllWarnings(config: Config, installed: seq[Installed],
+  installedTable: Table[string, Installed], rpcInfos: seq[RpcPackageInfo],
+  pkgInfos: seq[PackageInfo], acceptedPkgInfos: seq[PackageInfo],
+  upToDateNeeded: seq[Installed], buildUpToDateNeeded: seq[(string, string)],
+  foreignUpgrade: HashSet[string], localIsNewerSeq: seq[LocalIsNewer],
+  targetNamesSet: HashSet[string], upgradeCount: int, noaur: bool) =
+  let acceptedSet = acceptedPkgInfos.map(i => i.name).toSet
+
+  if upgradeCount > 0 and not noaur and config.printAurNotFound:
+    let rpcInfoTable = rpcInfos.map(i => (i.name, i)).toTable
+    for inst in installed:
+      if inst.name in foreignUpgrade and not config.ignored(inst.name, inst.groups) and
+        not rpcInfoTable.hasKey(inst.name):
+        printWarning(config.color, tr"$# was not found in AUR" % [inst.name])
+
+  if upgradeCount == 1:
+    for localIsNewer in localIsNewerSeq:
+      printWarning(config.color, tra("%s: local (%s) is newer than %s (%s)\n") %
+        [localIsNewer.name, localIsNewer.version, "aur", localIsNewer.aurVersion])
+
+  for inst in upToDateNeeded:
+    printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
+      [inst.name, inst.version])
+
+  for pair in buildUpToDateNeeded:
+    let (name, version) = pair
+    printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
+      [name, version])
+
+  for pkgInfo in pkgInfos:
+    if not (pkgInfo.name in acceptedSet):
+      if not (pkgInfo.name in targetNamesSet) and upgradeCount > 0 and
+        installedTable.hasKey(pkgInfo.name):
+        let installedVersion = installedTable[pkgInfo.name].version
+        let newVersion = pkgInfo.version
+        if vercmp(newVersion, installedVersion) < 0:
+          printWarning(config.color, tra("%s: ignoring package downgrade (%s => %s)\n") %
+            [pkgInfo.name, installedVersion, newVersion])
+        else:
+          printWarning(config.color, tra("%s: ignoring package upgrade (%s => %s)\n") %
+            [pkgInfo.name, installedVersion, newVersion])
+      else:
+        printWarning(config.color, trp("skipping target: %s\n") % [pkgInfo.name])
+    elif pkgInfo.repo == "aur":
+      if pkgInfo.maintainer.isNone:
+        printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
+      if installedTable.hasKey(pkgInfo.name):
+        let installedVersion = installedTable[pkgInfo.name].version
+        let newVersion = pkgInfo.version
+        if vercmp(newVersion, installedVersion) < 0:
+          printWarning(config.color,
+            tra("%s: downgrading from version %s to version %s\n") %
+            [pkgInfo.name, installedVersion, newVersion])
+
 proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
   targetNamesSet: HashSet[string], installed: Table[string, Installed],
   printMode: bool, noconfirm: bool): (seq[PackageInfo], seq[PackageInfo]) =
@@ -1020,30 +1074,48 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
 
   (pkgInfos, additionalPkgInfos, paths, upToDateNeeded, localIsNewerSeq, errors)
 
-proc handleSyncInstall*(args: seq[Argument], config: Config): int =
-  let (_, callArgs) = checkAndRefresh(config.color, args)
+proc obtainPacmanBuildTargets(config: Config, pacmanTargets: seq[FullPackageTarget[PackageInfo]],
+  installedTable: Table[string, Installed], printMode: bool, needed: bool, build: bool):
+  (bool, seq[PackageInfo], seq[(string, string)], seq[string], seq[string]) =
+  let (neededPacmanBuildTargets, buildUpToDateNeeded) = if not printMode and
+    build and needed: (block:
+      let neededPairs: seq[tuple[target: FullPackageTarget[PackageInfo],
+        skipVersion: Option[string]]] = pacmanTargets.map(target => (block:
+        let version = target.foundInfos[0].pkg.get.version
+        if installedTable.checkNeeded(target.reference.name, version, true).needed:
+          (target, none(string))
+        else:
+          (target, some(version))))
 
-  let upgradeCount = args.count((some("u"), "sysupgrade"))
-  let needed = args.check((none(string), "needed"))
-  let noaur = args.check((none(string), "noaur"))
-  let build = args.check((none(string), "build"))
+      let neededPacmanBuildTargets = neededPairs
+        .filter(p => p.skipVersion.isNone)
+        .map(p => p.target)
 
-  let printModeArg = args.check((some("p"), "print"))
-  let printModeFormat = args.filter(arg => arg
-    .matchOption((none(string), "print-format"))).optLast
-  let printFormat = if printModeArg or printModeFormat.isSome:
-      some(printModeFormat.map(arg => arg.value.get).get("%l"))
+      let buildUpToDateNeeded = neededPairs
+        .filter(p => p.skipVersion.isSome)
+        .map(p => (p.target.reference.name, p.skipVersion.unsafeGet))
+
+      (neededPacmanBuildTargets, buildUpToDateNeeded))
     else:
-      none(string)
+      (pacmanTargets, @[])
 
-  let noconfirm = args
-    .filter(arg => arg.matchOption((none(string), "confirm")) or
-      arg.matchOption((none(string), "noconfirm"))).optLast
-    .map(arg => arg.key == "noconfirm").get(false)
+  let checkPacmanBuildPkgInfos = not printMode and build and neededPacmanBuildTargets.len > 0
 
-  let targets = args.packageTargets
+  let (buildPkgInfos, buildPaths, obtainErrorMessages) = if checkPacmanBuildPkgInfos: (block:
+      echo(tr"checking official repositories...")
+      let (update, terminate) = createCloneProgress(config, pacmanTargets.len, printMode)
+      let res = obtainBuildPkgInfos[PackageInfo](config, pacmanTargets, update)
+      terminate()
+      res)
+    else:
+      (@[], @[], @[])
 
-  let (syncTargets, checkAurNames, installed, foreignUpgrade) = withAlpm(config.root, config.db,
+  (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths, obtainErrorMessages)
+
+proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget],
+  upgradeCount: int, noaur: bool, build: bool): (seq[SyncPackageTarget], seq[string],
+  seq[Installed], HashSet[string]) =
+  withAlpm(config.root, config.db,
     config.dbs, config.arch, handle, dbs, errors):
     for e in errors: printError(config.color, e)
 
@@ -1072,9 +1144,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       else:
         initSet[string]()
 
-    (syncTargets, checkAurNames, installed, foreignUpgrade)
-
-  let checkAurNamesFull = if noaur:
+    let checkAurNamesFull = if noaur:
       @[]
     elif upgradeCount > 0:
       installed
@@ -1084,147 +1154,131 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
     else:
       checkAurNames
 
-  withAur():
-    if printFormat.isNone and (checkAurNamesFull.len > 0 or build):
-      printColon(config.color, tr"Resolving build targets...")
-      if checkAurNamesFull.len > 0:
-        echo(tr"checking AUR database...")
+    (syncTargets, checkAurNamesFull, installed, foreignUpgrade)
 
-    let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNamesFull)
-    for e in rerrors: printError(config.color, e)
+proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
+  printMode: bool, upgradeCount: int, noconfirm: bool, needed: bool, noaur: bool, build: bool):
+  (int, seq[Installed], HashSet[string], HashSet[string], seq[FullPackageTarget[PackageInfo]],
+  seq[PackageInfo], seq[PackageInfo], seq[string]) =
+  template errorResult: untyped = (1, newSeq[Installed](), initSet[string](),
+    initSet[string](), newSeq[FullPackageTarget[PackageInfo]](),
+    newSeq[PackageInfo](), newSeq[PackageInfo](), newSeq[string]())
 
-    let rpcNotFoundTargets = filterNotFoundSyncTargets(syncTargets,
-      rpcInfos, initTable[string, PackageReference]())
+  let (syncTargets, checkAurNames, installed, foreignUpgrade) =
+    findSyncTargetsWithInstalled(config, targets, upgradeCount, noaur, build)
 
-    if rpcNotFoundTargets.len > 0:
-      printSyncNotFound(config, rpcNotFoundTargets)
-      1
+  if not printMode and (checkAurNames.len > 0 or build):
+    printColon(config.color, tr"Resolving build targets...")
+    if checkAurNames.len > 0:
+      echo(tr"checking AUR database...")
+
+  let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNames)
+  for e in rerrors: printError(config.color, e)
+
+  let rpcNotFoundTargets = filterNotFoundSyncTargets(syncTargets,
+    rpcInfos, initTable[string, PackageReference]())
+
+  if rpcNotFoundTargets.len > 0:
+    printSyncNotFound(config, rpcNotFoundTargets)
+    errorResult
+  else:
+    let installedTable = installed.map(i => (i.name, i)).toTable
+    let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos).filter(isAurTargetFull)
+
+    let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
+      obtainAurPackageInfos(config, rpcInfos, rpcAurTargets, installedTable,
+        printMode, needed, upgradeCount)
+    for e in aperrors: printError(config.color, e)
+
+    let upToDateNeededTable = upToDateNeeded.map(i => (i.name,
+      (i.name, none(string), some((ConstraintOperation.eq, i.version))))).toTable
+    let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
+      aurPkgInfos, upToDateNeededTable)
+
+    if notFoundTargets.len > 0:
+      clearPaths(aurPaths)
+      printSyncNotFound(config, notFoundTargets)
+      errorResult
     else:
-      if upgradeCount > 0 and not noaur and printFormat.isNone and config.printAurNotFound:
-        let rpcInfoTable = rpcInfos.map(i => (i.name, i)).toTable
-        for inst in installed:
-          if inst.name in foreignUpgrade and not config.ignored(inst.name, inst.groups) and
-            not rpcInfoTable.hasKey(inst.name):
-            printWarning(config.color, tr"$# was not found in AUR" % [inst.name])
+      let fullTargets = mapAurTargets(syncTargets.filter(t => not (upToDateNeededTable
+        .opt(t.reference.name).map(r => t.reference.isProvidedBy(r)).get(false))), aurPkgInfos)
+      let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
+      let aurTargets = fullTargets.filter(isAurTargetFull)
 
-      let installedTable = installed.map(i => (i.name, i)).toTable
-      let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos).filter(isAurTargetFull)
+      let (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths,
+        obtainBuildErrorMessages) = obtainPacmanBuildTargets(config, pacmanTargets, installedTable,
+        printMode, needed, build)
 
-      let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
-        obtainAurPackageInfos(config, rpcInfos, rpcAurTargets, installedTable,
-          printFormat.isSome, needed, upgradeCount)
-      for e in aperrors: printError(config.color, e)
-
-      let upToDateNeededTable = upToDateNeeded.map(i => (i.name,
-        (i.name, none(string), some((ConstraintOperation.eq, i.version))))).toTable
-      let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
-        aurPkgInfos, upToDateNeededTable)
-
-      if notFoundTargets.len > 0:
+      if checkPacmanBuildPkgInfos and buildPkgInfos.len < pacmanTargets.len:
+        # "--build" conflicts with "--sysupgrade", so it's ok to fail here
+        clearPaths(buildPaths)
         clearPaths(aurPaths)
-        printSyncNotFound(config, notFoundTargets)
-        1
+        for e in obtainBuildErrorMessages: printError(config.color, e)
+        errorResult
       else:
-        let fullTargets = mapAurTargets(syncTargets.filter(t => not (upToDateNeededTable
-          .opt(t.reference.name).map(r => t.reference.isProvidedBy(r)).get(false))), aurPkgInfos)
-        let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
-        let aurTargets = fullTargets.filter(isAurTargetFull)
+        let pkgInfos = (buildPkgInfos & aurPkgInfos)
+          .deduplicatePkgInfos(config, not printMode)
+        let targetNamesSet = (pacmanTargets & aurTargets).map(t => t.reference.name).toSet
+        let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
+          targetNamesSet, installedTable, printMode, noconfirm)
 
-        if printFormat.isNone and upgradeCount == 1:
-          for localIsNewer in localIsNewerSeq:
-            printWarning(config.color, tra("%s: local (%s) is newer than %s (%s)\n") %
-              [localIsNewer.name, localIsNewer.version, "aur", localIsNewer.aurVersion])
+        if not printMode:
+          printAllWarnings(config, installed, installedTable, rpcInfos,
+            pkgInfos, acceptedPkgInfos, upToDateNeeded, buildUpToDateNeeded,
+            foreignUpgrade, localIsNewerSeq, targetNamesSet, upgradeCount, noaur)
 
-        if printFormat.isNone:
-          for inst in upToDateNeeded:
-            printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
-              [inst.name, inst.version])
+        (0, installed, foreignUpgrade, targetNamesSet, pacmanTargets,
+          finalPkgInfos, additionalPkgInfos, buildPaths & aurPaths)
 
-        let neededPacmanTargets = if printFormat.isNone and build and needed:
-            pacmanTargets.filter(target => (block:
-              let version = target.foundInfos[0].pkg.get.version
-              if installedTable.checkNeeded(target.reference.name, version, true).needed:
-                true
-              else:
-                printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
-                  [target.reference.name, version])
-                false))
-          else:
-            pacmanTargets
+proc handleSyncInstall*(args: seq[Argument], config: Config): int =
+  let (_, callArgs) = checkAndRefresh(config.color, args)
 
-        let checkPacmanPkgInfos = printFormat.isNone and build and
-          neededPacmanTargets.len > 0
+  let upgradeCount = args.count((some("u"), "sysupgrade"))
+  let needed = args.check((none(string), "needed"))
+  let noaur = args.check((none(string), "noaur"))
+  let build = args.check((none(string), "build"))
 
-        let (buildPkgInfos, buildPaths, obtainErrorMessages) = if checkPacmanPkgInfos: (block:
-            echo(tr"checking official repositories...")
-            let (update, terminate) = createCloneProgress(config,
-              pacmanTargets.len, printFormat.isSome)
-            let res = obtainBuildPkgInfos[PackageInfo](config, pacmanTargets, update)
-            terminate()
-            res)
-          else:
-            (@[], @[], @[])
+  let printModeArg = args.check((some("p"), "print"))
+  let printModeFormat = args.filter(arg => arg
+    .matchOption((none(string), "print-format"))).optLast
+  let printFormat = if printModeArg or printModeFormat.isSome:
+      some(printModeFormat.map(arg => arg.value.get).get("%l"))
+    else:
+      none(string)
 
-        if checkPacmanPkgInfos and buildPkgInfos.len < pacmanTargets.len:
-          # "--build" conflicts with "--sysupgrade", so it's ok to fail here
-          clearPaths(buildPaths)
-          clearPaths(aurPaths)
-          for e in obtainErrorMessages: printError(config.color, e)
-          1
+  let noconfirm = args
+    .filter(arg => arg.matchOption((none(string), "confirm")) or
+      arg.matchOption((none(string), "noconfirm"))).optLast
+    .map(arg => arg.key == "noconfirm").get(false)
+
+  let targets = args.packageTargets
+
+  withAur():
+    let (code, installed, foreignUpgrade, targetNamesSet, pacmanTargets,
+      pkgInfos, additionalPkgInfos, paths) = resolveBuildTargets(config, targets,
+      printFormat.isSome, upgradeCount, noconfirm, needed, noaur, build)
+
+    let pacmanArgs = callArgs.filterExtensions(true, true)
+    if code != 0:
+      code
+    elif printFormat.isSome:
+      handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount,
+        pacmanTargets, pkgInfos, additionalPkgInfos, noaur)
+    else:
+      let foreignInstalled = installed.filter(i => i.name in foreignUpgrade)
+      let foreignExplicitsNamesSet = foreignInstalled
+        .filter(i => i.explicit).map(i => i.name).toSet
+      let foreignDepsNamesSet = foreignInstalled
+        .filter(i => not i.explicit).map(i => i.name).toSet
+      let keepNames = foreignExplicitsNamesSet + foreignDepsNamesSet + targetNamesSet
+
+      let explicits = if args.check((none(string), "asexplicit")):
+          targetNamesSet + foreignExplicitsNamesSet + foreignDepsNamesSet
+        elif args.check((none(string), "asdeps")):
+          initSet[string]()
         else:
-          let pkgInfos = (buildPkgInfos & aurPkgInfos)
-            .deduplicatePkgInfos(config, printFormat.isNone)
-          let targetNamesSet = (pacmanTargets & aurTargets).map(t => t.reference.name).toSet
-          let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
-            targetNamesSet, installedTable, printFormat.isSome, noconfirm)
+          foreignExplicitsNamesSet + (targetNamesSet - foreignDepsNamesSet)
 
-          if printFormat.isNone:
-            let acceptedSet = acceptedPkgInfos.map(i => i.name).toSet
-
-            for pkgInfo in pkgInfos:
-              if not (pkgInfo.name in acceptedSet):
-                if not (pkgInfo.name in targetNamesSet) and upgradeCount > 0 and
-                  installedTable.hasKey(pkgInfo.name):
-                  let installedVersion = installedTable[pkgInfo.name].version
-                  let newVersion = pkgInfo.version
-                  if vercmp(newVersion, installedVersion) < 0:
-                    printWarning(config.color, tra("%s: ignoring package downgrade (%s => %s)\n") %
-                      [pkgInfo.name, installedVersion, newVersion])
-                  else:
-                    printWarning(config.color, tra("%s: ignoring package upgrade (%s => %s)\n") %
-                      [pkgInfo.name, installedVersion, newVersion])
-                else:
-                  printWarning(config.color, trp("skipping target: %s\n") % [pkgInfo.name])
-              elif pkgInfo.repo == "aur":
-                if pkgInfo.maintainer.isNone:
-                  printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
-                if installedTable.hasKey(pkgInfo.name):
-                  let installedVersion = installedTable[pkgInfo.name].version
-                  let newVersion = pkgInfo.version
-                  if vercmp(newVersion, installedVersion) < 0:
-                    printWarning(config.color,
-                      tra("%s: downgrading from version %s to version %s\n") %
-                      [pkgInfo.name, installedVersion, newVersion])
-
-          let pacmanArgs = callArgs.filterExtensions(true, true)
-          if printFormat.isSome:
-            handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount,
-              pacmanTargets, finalPkgInfos, additionalPkgInfos, noaur)
-          else:
-            let foreignInstalled = installed.filter(i => i.name in foreignUpgrade)
-            let foreignExplicitsNamesSet = foreignInstalled
-              .filter(i => i.explicit).map(i => i.name).toSet
-            let foreignDepsNamesSet = foreignInstalled
-              .filter(i => not i.explicit).map(i => i.name).toSet
-            let keepNames = foreignExplicitsNamesSet + foreignDepsNamesSet + targetNamesSet
-
-            let explicits = if args.check((none(string), "asexplicit")):
-                targetNamesSet + foreignExplicitsNamesSet + foreignDepsNamesSet
-              elif args.check((none(string), "asdeps")):
-                initSet[string]()
-              else:
-                foreignExplicitsNamesSet + (targetNamesSet - foreignDepsNamesSet)
-
-            handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
-              explicits, installed, pacmanTargets, finalPkgInfos, additionalPkgInfos, keepNames,
-              buildPaths & aurPaths, build, noaur)
+      handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
+        explicits, installed, pacmanTargets, pkgInfos, additionalPkgInfos, keepNames,
+        paths, build, noaur)
