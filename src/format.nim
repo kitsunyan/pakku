@@ -65,6 +65,12 @@ proc printError*(color: bool, s: string) =
 proc printWarning*(color: bool, s: string) =
   stderr.writeLine(^Color.yellow, trp"warning: ", ^Color.normal, s)
 
+proc printFile*(color: bool, quiet: bool, name: string, file: string) =
+  if quiet:
+    echo(file)
+  else:
+    echo(^Color.bold, name, ^Color.normal, ' ', file)
+
 proc formatPkgRating*(votes: int, popularity: float): string =
   $votes & " / " & formatFloat(popularity, format = ffDecimal, precision = 6)
 

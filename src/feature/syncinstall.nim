@@ -197,7 +197,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
               let (rpcInfos, aerrors) = getRpcPackageInfos(aurCheck.map(r => r.name))
               for e in aerrors: printError(config.color, e)
               let (pkgInfos, additionalPkgInfos, paths, cerrors) =
-                cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update)
+                cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
               for e in cerrors: printError(config.color, e)
               (pkgInfos, additionalPkgInfos, paths))
 
@@ -247,30 +247,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
 template clearPaths(paths: untyped) =
   for path in paths:
     removeDirQuiet(path)
-  discard rmdir(config.tmpRoot)
-
-proc filterNotFoundSyncTargetsInternal(syncTargets: seq[SyncPackageTarget],
-  pkgInfoReferencesTable: Table[string, PackageReference],
-  upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
-  # collect packages which were found neither in sync DB nor in AUR
-  syncTargets.filter(t => not (upToDateNeededTable.opt(t.reference.name)
-    .map(r => t.reference.isProvidedBy(r)).get(false)) and t.foundInfos.len == 0 and
-    not (t.isAurTargetSync and pkgInfoReferencesTable.opt(t.reference.name)
-    .map(r => t.reference.isProvidedBy(r)).get(false)))
-
-proc filterNotFoundSyncTargets[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
-  pkgInfos: seq[T], upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
-  let pkgInfoReferencesTable = pkgInfos.map(i => (i.name, i.toPackageReference)).toTable
-  filterNotFoundSyncTargetsInternal(syncTargets, pkgInfoReferencesTable, upToDateNeededTable)
-
-proc printSyncNotFound(config: Config, notFoundTargets: seq[SyncPackageTarget]) =
-  let dbs = config.dbs.toSet
-
-  for target in notFoundTargets:
-    if target.repo.isNone or target.repo == some("aur") or target.repo.unsafeGet in dbs:
-      printError(config.color, trp("target not found: %s\n") % [$target.reference])
-    else:
-      printError(config.color, trp("database not found: %s\n") % [target.repo.unsafeGet])
+  discard rmdir(config.tmpRootInitial)
 
 proc printUnsatisfied(config: Config,
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference]) =
@@ -328,19 +305,7 @@ proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[
     else:
       res
 
-  let rawFiles = if gitSubdir.isSome:
-      forkWaitRedirect(() => (block:
-        dropPrivilegesAndChdir(none(string)):
-          execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
-            gitSubdir.unsafeGet & "/")))
-        .output
-        .map(s => s[gitSubdir.unsafeGet.len + 1 .. ^1])
-    else:
-      forkWaitRedirect(() => (block:
-        dropPrivilegesAndChdir(none(string)):
-          execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")))
-        .output
-
+  let rawFiles = getGitFiles(repoPath, gitSubdir, true)
   let files = ("PKGBUILD" & rawFiles.filter(x => x != ".SRCINFO")).deduplicate
 
   proc editFileLoopAll(index: int): char =
@@ -355,7 +320,7 @@ proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[
 proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
   noextract: bool): (Option[BuildResult], int, bool) =
   let base = pkgInfos[0].base
-  let repoPath = repoPath(config.tmpRoot, base)
+  let repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].gitSubdir
   let buildPath = buildPath(repoPath, gitSubdir)
 
@@ -365,7 +330,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
     else:
       confFileEnv
 
-  let workConfFile = config.tmpRoot & "/makepkg.conf"
+  let workConfFile = config.tmpRootInitial & "/makepkg.conf"
 
   let workConfFileCopySuccess = try:
     copyFile(confFile, workConfFile)
@@ -377,7 +342,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
         file.writeLine("# PAKKU OVERRIDES")
         file.writeLine('#'.repeat(73))
         file.writeLine("CARCH=" & config.arch.bashEscape)
-        file.writeLine("PKGDEST=" & config.tmpRoot.bashEscape)
+        file.writeLine("PKGDEST=" & config.tmpRootInitial.bashEscape)
       finally:
         file.close()
     true
@@ -458,7 +423,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =
   let base = pkgInfos[0].base
-  let repoPath = repoPath(config.tmpRoot, base)
+  let repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].gitSubdir
 
   proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
@@ -536,7 +501,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 
   proc formatArchiveFile(pkgInfo: PackageInfo, ext: string): string =
     let arch = if config.arch in pkgInfo.archs: config.arch else: "any"
-    config.tmpRoot & "/" & pkgInfo.name & "-" & pkgInfo.version & "-" & arch & ext
+    config.tmpRootInitial & "/" & pkgInfo.name & "-" & pkgInfo.version & "-" & arch & ext
 
   let allFiles = lc[(r.name, formatArchiveFile(r.pkgInfo, br.ext)) |
     (br <- buildResults, r <- br.replacePkgInfos), tuple[name: Option[string], file: string]]
@@ -554,7 +519,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
           discard
 
     if not clear:
-      printWarning(config.color, tr"packages are saved to '$#'" % [config.tmpRoot])
+      printWarning(config.color, tr"packages are saved to '$#'" % [config.tmpRootInitial])
 
   if buildCode != 0:
     handleTmpRoot(true)
@@ -654,7 +619,7 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
         if index < flatBasePackages.len:
           let pkgInfos = flatBasePackages[index]
           let base = pkgInfos[0].base
-          let repoPath = repoPath(config.tmpRoot, base)
+          let repoPath = repoPath(config.tmpRootInitial, base)
 
           let aur = pkgInfos[0].repo == "aur"
 
@@ -1072,7 +1037,7 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
     else: (block:
       let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name))
       let (pkgInfos, additionalPkgInfos, paths, cerrors) =
-        cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update)
+        cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
       (pkgInfos, additionalPkgInfos, paths, (toSeq(aerrors.items) & cerrors).deduplicate))
 
   terminate()
@@ -1113,7 +1078,7 @@ proc obtainPacmanBuildTargets(config: Config, pacmanTargets: seq[FullPackageTarg
   let (buildPkgInfos, buildPaths, obtainErrorMessages) = if checkPacmanBuildPkgInfos: (block:
       echo(tr"checking official repositories...")
       let (update, terminate) = createCloneProgress(config, pacmanTargets.len, printMode)
-      let res = obtainBuildPkgInfos[PackageInfo](config, pacmanTargets, update)
+      let res = obtainBuildPkgInfos[PackageInfo](config, pacmanTargets, update, true)
       terminate()
       res)
     else:
@@ -1259,7 +1224,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       arg.matchOption(%%%"noconfirm")).optLast
     .map(arg => arg.key == "noconfirm").get(false)
 
-  let targets = args.packageTargets
+  let targets = args.packageTargets(false)
 
   withAur():
     let (code, installed, foreignUpgrade, targetNamesSet, pacmanTargets,

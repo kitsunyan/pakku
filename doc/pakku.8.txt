@@ -39,6 +39,10 @@ Sync Options (apply to '-S')[[SO]]
 	root path, skip dependency checking using '-d', or run the program
 	from root.
 
+*-z, \--source*::
+	Retrieve PKGBUILD source. You can specify destination directory after
+	package name: pakku -Sz bash::/tmp/bash.
+
 Configuration
 -------------
 See linkman:pacman.conf[5] and linkman:pakku.conf[5] for details on configuring

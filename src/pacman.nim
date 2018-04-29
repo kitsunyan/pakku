@@ -142,7 +142,8 @@ const
     o("y", "refresh") + g(syncInstall, syncSearch, syncQuery),
     $o("n", "build") + g(syncInstall),
     $(^o("keyserver")) + g(syncInstall),
-    $o("noaur") + g(syncInstall)
+    $o("noaur") + g(syncInstall),
+    $o("z", "source") + g()
   ]
 
   databaseOptions*: seq[CommandOption] = @[
@@ -177,7 +178,9 @@ const
     ("asdeps", @["asexplicit"]),
     ("build", @["nodeps", "assume-installed", "dbonly", "clean",
       "groups", "info", "list", "search", "sysupgrade", "downloadonly"]),
-    ("keyserver", @["clean", "groups", "info", "list", "search"])
+    ("keyserver", @["clean", "groups", "info", "list", "search"]),
+    ("source", @["clean", "groups", "info", "list", "search", "sysupgrade",
+      "downloadonly", "build", "keyserver", "noaur"])
   ]
 
   allConflictingOptions = syncConflictingOptions

@@ -1,6 +1,6 @@
 import
   future, options, os, osproc, posix, sequtils, sets, strutils, tables,
-  args, config, lists, package, pacman, utils,
+  args, config, format, lists, package, pacman, utils,
   "wrapper/alpm"
 
 type
@@ -18,6 +18,7 @@ type
   PackageTarget* = object of RootObj
     reference*: PackageReference
     repo*: Option[string]
+    destination*: Option[string]
 
   SyncPackageTarget* = object of PackageTarget
     foundInfos*: seq[SyncFoundInfo]
@@ -51,21 +52,54 @@ proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: 
   else:
     (0, args)
 
-proc packageTargets*(args: seq[Argument]): seq[PackageTarget] =
+proc packageTargets*(args: seq[Argument], parseDestination: bool): seq[PackageTarget] =
   args.targets.map(target => (block:
-    let splitTarget = target.split('/', 2)
-    let (repo, nameConstraint) = if splitTarget.len == 2:
-        (some(splitTarget[0]), splitTarget[1])
+    let (noDestinationTarget, destination) = if parseDestination: (block:
+        let split = target.split("::", 2)
+        if split.len == 2:
+          (split[0], some(split[1]))
+        else:
+          (target, none(string)))
       else:
-        (none(string), target)
+        (target, none(string))
+
+    let splitRepoTarget = noDestinationTarget.split('/', 2)
+    let (repo, nameConstraint) = if splitRepoTarget.len == 2:
+        (some(splitRepoTarget[0]), splitRepoTarget[1])
+      else:
+        (none(string), noDestinationTarget)
+
     let reference = parsePackageReference(nameConstraint, false)
-    PackageTarget(reference: reference, repo: repo)))
+    PackageTarget(reference: reference, repo: repo, destination: destination)))
 
 proc isAurTargetSync*(target: SyncPackageTarget): bool =
   target.foundInfos.len == 0 and (target.repo.isNone or target.repo == some("aur"))
 
 proc isAurTargetFull*[T: RpcPackageInfo](target: FullPackageTarget[T]): bool =
   target.foundInfos.len > 0 and target.foundInfos[0].repo == "aur"
+
+proc filterNotFoundSyncTargetsInternal(syncTargets: seq[SyncPackageTarget],
+  pkgInfoReferencesTable: Table[string, PackageReference],
+  upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
+  # collect packages which were found neither in sync DB nor in AUR
+  syncTargets.filter(t => not (upToDateNeededTable.opt(t.reference.name)
+    .map(r => t.reference.isProvidedBy(r)).get(false)) and t.foundInfos.len == 0 and
+    not (t.isAurTargetSync and pkgInfoReferencesTable.opt(t.reference.name)
+    .map(r => t.reference.isProvidedBy(r)).get(false)))
+
+proc filterNotFoundSyncTargets*[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
+  pkgInfos: seq[T], upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
+  let pkgInfoReferencesTable = pkgInfos.map(i => (i.name, i.toPackageReference)).toTable
+  filterNotFoundSyncTargetsInternal(syncTargets, pkgInfoReferencesTable, upToDateNeededTable)
+
+proc printSyncNotFound*(config: Config, notFoundTargets: seq[SyncPackageTarget]) =
+  let dbs = config.dbs.toSet
+
+  for target in notFoundTargets:
+    if target.repo.isNone or target.repo == some("aur") or target.repo.unsafeGet in dbs:
+      printError(config.color, trp("target not found: %s\n") % [$target.reference])
+    else:
+      printError(config.color, trp("database not found: %s\n") % [target.repo.unsafeGet])
 
 proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   targets: seq[PackageTarget], allowGroups: bool, checkProvides: bool):
@@ -125,7 +159,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
         return @[]
 
   let syncTargets = targets.map(t => SyncPackageTarget(reference: t.reference,
-    repo: t.repo, foundInfos: findSync(t)))
+    repo: t.repo, destination: t.destination, foundInfos: findSync(t)))
   let checkAurNames = syncTargets.filter(isAurTargetSync).map(t => t.reference.name)
   (syncTargets, checkAurNames)
 
@@ -146,10 +180,10 @@ proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
     if res.isSome:
       let (syncInfo, pkgInfo) = res.get
       FullPackageTarget[T](reference: target.reference, repo: target.repo,
-        foundInfos: @[syncInfo], pkgInfo: some(pkgInfo))
+        destination: target.destination, foundInfos: @[syncInfo], pkgInfo: some(pkgInfo))
     else:
       FullPackageTarget[T](reference: target.reference, repo: target.repo,
-        foundInfos: target.foundInfos, pkgInfo: none(T)))
+        destination: target.destination, foundInfos: target.foundInfos, pkgInfo: none(T)))
 
 proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptional: bool,
   assumeExplicit: HashSet[string]): (HashSet[string], HashSet[string], HashSet[string]) =
@@ -213,22 +247,46 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
 proc `$`*[T: PackageTarget](target: T): string =
   target.repo.map(proc (r: string): string = r & "/" & $target.reference).get($target.reference)
 
-proc ensureTmpOrError*(config: Config): Option[string] =
+template tmpRoot(config: Config, dropPrivileges: bool): string =
+  if dropPrivileges: config.tmpRootInitial else: config.tmpRootCurrent
+
+proc ensureTmpOrError*(config: Config, dropPrivileges: bool): Option[string] =
   let tmpRootExists = try:
-    let user = initialUser.get(currentUser)
-    discard config.tmpRoot.existsOrCreateDir()
-    discard chown(config.tmpRoot, (Uid) user.uid, (Gid) user.gid)
+    discard config.tmpRoot(dropPrivileges).existsOrCreateDir()
+    if dropPrivileges:
+      let user = initialUser.get(currentUser)
+      discard chown(config.tmpRoot(dropPrivileges), (Uid) user.uid, (Gid) user.gid)
     true
   except:
     false
 
   if not tmpRootExists:
-    some(tr"failed to create tmp directory '$#'" % [config.tmpRoot])
+    some(tr"failed to create tmp directory '$#'" % [config.tmpRoot(dropPrivileges)])
   else:
     none(string)
 
+proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
+  dropPrivileges: bool): seq[string] =
+  if gitSubdir.isSome:
+    forkWaitRedirect(() => (block:
+      if not dropPrivileges or dropPrivileges():
+        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
+          gitSubdir.unsafeGet & "/")
+      else:
+        quit(1)))
+      .output
+      .map(s => s[gitSubdir.unsafeGet.len + 1 .. ^1])
+  else:
+    forkWaitRedirect(() => (block:
+      if not dropPrivileges or dropPrivileges():
+        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")
+      else:
+        quit(1)))
+      .output
+
 proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
-  compareMethod: string, gitSubdir: string, version: string): Option[string] =
+  compareMethod: string, gitSubdir: string, version: string,
+  dropPrivileges: bool): Option[string] =
   template forkExecWithoutOutput(args: varargs[string]): int =
     forkWait(() => (block:
       discard close(0)
@@ -236,7 +294,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
         discard close(1)
         discard close(2)
 
-      if dropPrivileges():
+      if not dropPrivileges or dropPrivileges():
         execResult(args)
       else:
         quit(1)))
@@ -245,7 +303,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       (firstCommit, false)
     else:
       (forkWaitRedirect(() => (block:
-        if dropPrivileges():
+        if not dropPrivileges or dropPrivileges():
           execResult(gitCmd, "-C", repoPath,
             "rev-list", "--max-parents=0", "@")
         else:
@@ -253,7 +311,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
         .output.optLast, true)
 
   let (realLastThreeCommits, _) = forkWaitRedirect(() => (block:
-    if dropPrivileges():
+    if not dropPrivileges or dropPrivileges():
       execResult(gitCmd, "-C", repoPath,
         "rev-list", "--max-count=3", "@")
     else:
@@ -273,7 +331,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       none(string)
     else:
       let foundVersion = forkWaitRedirect(() => (block:
-        if dropPrivileges():
+        if not dropPrivileges or dropPrivileges():
           execResult(pkgLibDir & "/bisect",
             compareMethod, repoPath & "/" & gitSubdir, version)
         else:
@@ -317,7 +375,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
         "bisect", "run", pkgLibDir & "/bisect", compareMethod, gitSubdir, version)
 
       let commit = forkWaitRedirect(() => (block:
-        if dropPrivileges():
+        if not dropPrivileges or dropPrivileges():
           execResult(gitCmd, "-C", repoPath,
             "rev-list", "--max-count=1", "refs/bisect/bad")
         else:
@@ -333,7 +391,8 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
           checkedCommit
         else:
           # non-incremental git history (e.g. downgrade without epoch change), bisect again
-          bisectVersion(repoPath, debug, commit, compareMethod, gitSubdir, version)
+          bisectVersion(repoPath, debug, commit, compareMethod, gitSubdir,
+            version, dropPrivileges)
       elif checkFirst and workFirstCommit.isSome:
         checkCommit(workFirstCommit.unsafeGet)
       else:
@@ -360,8 +419,52 @@ proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): 
   else:
     pkgInfos
 
+proc clonePackageRepoInternal(config: Config, base: string, version: string,
+  git: GitRepo, dropPrivileges: bool): Option[string] =
+  let tmpRoot = config.tmpRoot(dropPrivileges)
+  let repoPath = repoPath(tmpRoot, base)
+  removeDirQuiet(repoPath)
+
+  if forkWait(() => (block:
+    if not dropPrivileges or dropPrivileges():
+      execResult(gitCmd, "-C", tmpRoot,
+        "clone", "-q", git.url, "-b", git.branch,
+        "--single-branch", base)
+    else:
+      quit(1))) == 0:
+    let commit = bisectVersion(repoPath, config.debug, none(string),
+      "source", git.path, version, dropPrivileges)
+
+    if commit.isNone:
+      removeDirQuiet(repoPath)
+      none(string)
+    else:
+      discard forkWait(() => (block:
+        if not dropPrivileges or dropPrivileges():
+          execResult(gitCmd, "-C", repoPath,
+            "checkout", "-q", commit.unsafeGet)
+        else:
+          quit(1)))
+
+      some(repoPath)
+  else:
+    removeDirQuiet(repoPath)
+    none(string)
+
+proc clonePackageRepo*(config: Config, base: string, version: string,
+  git: GitRepo, dropPrivileges: bool): Option[string] =
+  let message = ensureTmpOrError(config, dropPrivileges)
+  if message.isSome:
+    message
+  else:
+    let repoPath = clonePackageRepoInternal(config, base, version, git, dropPrivileges)
+    if repoPath.isNone:
+      some(tr"$#: failed to clone git repository" % [base])
+    else:
+      none(string)
+
 proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
-  pacmanTargetNames: seq[string], progressCallback: (int, int) -> void):
+  pacmanTargetNames: seq[string], progressCallback: (int, int) -> void, dropPrivileges: bool):
   (seq[PackageInfo], seq[string], seq[string]) =
   let lookupResults: seq[LookupGitResult] = bases
     .map(b => (b, lookupGitRepo(b.repo, b.base, b.arch)))
@@ -371,43 +474,21 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
     let messages = notFoundRepos.map(r => tr"$#: repository not found" % [r.group.base])
     (newSeq[PackageInfo](), newSeq[string](), messages)
   else:
-    let message = ensureTmpOrError(config)
+    let message = ensureTmpOrError(config, dropPrivileges)
     if message.isSome:
       (@[], @[], @[message.unsafeGet])
     else:
       proc findCommitAndGetSrcInfo(base: string, version: string,
         repo: string, git: GitRepo): tuple[pkgInfos: seq[PackageInfo], path: Option[string]] =
-        let repoPath = repoPath(config.tmpRoot, base)
-        removeDirQuiet(repoPath)
+        let repoPath = clonePackageRepoInternal(config, base, version, git, dropPrivileges)
 
-        if forkWait(() => (block:
-          if dropPrivileges():
-            execResult(gitCmd, "-C", config.tmpRoot,
-              "clone", "-q", git.url, "-b", git.branch,
-              "--single-branch", base)
-          else:
-            quit(1))) == 0:
-          let commit = bisectVersion(repoPath, config.debug, none(string),
-            "source", git.path, version)
-
-          if commit.isNone:
-            removeDirQuiet(repoPath)
-            (newSeq[PackageInfo](), none(string))
-          else:
-            discard forkWait(() => (block:
-              if dropPrivileges():
-                execResult(gitCmd, "-C", repoPath,
-                  "checkout", "-q", commit.unsafeGet)
-              else:
-                quit(1)))
-
-            let srcInfo = obtainSrcInfo(repoPath & "/" & git.path)
-            let pkgInfos = parseSrcInfo(repo, srcInfo, config.arch,
-              git.url, some(git.path))
-              .filter(i => i.version == version)
-            (pkgInfos, some(repoPath))
+        if repoPath.isSome:
+          let srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/" & git.path)
+          let pkgInfos = parseSrcInfo(repo, srcInfo, config.arch,
+            git.url, some(git.path))
+            .filter(i => i.version == version)
+          (pkgInfos, repoPath)
         else:
-          removeDirQuiet(repoPath)
           (newSeq[PackageInfo](), none(string))
 
       progressCallback(0, lookupResults.len)
@@ -434,12 +515,12 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
       if errorMessages.len > 0:
         for path in paths:
           removeDirQuiet(path)
-      discard rmdir(config.tmpRoot)
+      discard rmdir(config.tmpRoot(dropPrivileges))
       (foundPkgInfos, paths, errorMessages)
 
 proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
-  pacmanTargets: seq[FullPackageTarget[T]], progressCallback: (int, int) -> void):
-  (seq[PackageInfo], seq[string], seq[string]) =
+  pacmanTargets: seq[FullPackageTarget[T]], progressCallback: (int, int) -> void,
+  dropPrivileges: bool): (seq[PackageInfo], seq[string], seq[string]) =
   let bases = pacmanTargets
     .map(proc (target: FullPackageTarget[T]): LookupBaseGroup =
       let info = target.foundInfos[0]
@@ -448,20 +529,21 @@ proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
     .deduplicate
 
   let pacmanTargetNames = pacmanTargets.map(t => t.reference.name)
-  obtainBuildPkgInfosInternal(config, bases, pacmanTargetNames, progressCallback)
+  obtainBuildPkgInfosInternal(config, bases, pacmanTargetNames, progressCallback, dropPrivileges)
 
-proc cloneAurRepo*(config: Config, base: string, gitUrl: string): (int, Option[string]) =
-  let repoPath = repoPath(config.tmpRoot, base)
+proc cloneAurRepo*(config: Config, base: string, gitUrl: string,
+  dropPrivileges: bool): (int, Option[string]) =
+  let repoPath = repoPath(config.tmpRoot(dropPrivileges), base)
 
-  let message = ensureTmpOrError(config)
+  let message = ensureTmpOrError(config, dropPrivileges)
   if message.isSome:
     (1, message)
   elif repoPath.existsDir():
     (0, none(string))
   else:
     let cloneCode = forkWait(() => (block:
-      if dropPrivileges():
-        execResult(gitCmd, "-C", config.tmpRoot,
+      if not dropPrivileges or dropPrivileges():
+        execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
           "clone", "-q", gitUrl, "--single-branch", base)
       else:
         quit(1)))
@@ -472,7 +554,7 @@ proc cloneAurRepo*(config: Config, base: string, gitUrl: string): (int, Option[s
       (0, none(string))
 
 proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo],
-  keepRepos: bool, progressCallback: (int, int) -> void):
+  keepRepos: bool, progressCallback: (int, int) -> void, dropPrivileges: bool):
   (seq[PackageInfo], seq[PackageInfo], seq[string], seq[string]) =
   let bases: seq[tuple[base: string, gitUrl: string]] = rpcInfos
     .map(i => (i.base, i.gitUrl)).deduplicate
@@ -484,11 +566,11 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
     if index >= bases.len:
       (toSeq(pkgInfos.items), toSeq(paths.items), toSeq(errors.items))
     else:
-      let repoPath = repoPath(config.tmpRoot, bases[index].base)
+      let repoPath = repoPath(config.tmpRoot(dropPrivileges), bases[index].base)
       removeDirQuiet(repoPath)
 
       let (cloneCode, cloneErrorMessage) = cloneAurRepo(config,
-        bases[index].base, bases[index].gitUrl)
+        bases[index].base, bases[index].gitUrl, dropPrivileges)
 
       progressCallback(index + 1, bases.len)
 
@@ -516,5 +598,5 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
   let names = rpcInfos.map(i => i.name).toSet
   let additionalPkgInfos = fullPkgInfos.filter(i => not (i.name in names))
 
-  discard rmdir(config.tmpRoot)
+  discard rmdir(config.tmpRoot(dropPrivileges))
   (resultPkgInfos, additionalPkgInfos, paths, errors)

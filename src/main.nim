@@ -4,8 +4,9 @@ import
 
 import
   "feature/syncinfo",
-  "feature/syncsearch",
   "feature/syncinstall",
+  "feature/syncsearch",
+  "feature/syncsource",
   "feature/localquery"
 
 proc passValidation(args: seq[Argument], config: Config,
@@ -82,6 +83,8 @@ proc handleSync(args: seq[Argument], config: Config): int =
   elif syncArgs.check(%%%"search") and
     syncArgs.checkOpGroup(OpGroup.syncSearch):
     handleSyncSearch(args, config)
+  elif syncArgs.check(%%%"source"):
+    handleSyncSource(args, config)
   elif syncArgs.checkOpGroup(OpGroup.syncInstall) and
     (args.check(%%%"sysupgrade") or args.targets.len > 0):
     let printMode = args.check(%%%"print") or args.check(%%%"print-format")
@@ -185,6 +188,7 @@ proc handleHelp(operation: OperationType) =
         printHelp(%%%"build", none(string), tr"build targets from source")
         printHelp(%%%"keyserver", some("name"), tr"use name as keyserver to receive keys from")
         printHelp(%%%"noaur", none(string), tr"disable all AUR operations")
+        printHelp(%%%"source", none(string), tr"retrieve PKGBUILD source")
       else:
         discard
 

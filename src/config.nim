@@ -27,7 +27,8 @@ type
   Config* = object of CommonConfig
     root*: string
     db*: string
-    tmpRoot*: string
+    tmpRootInitial*: string
+    tmpRootCurrent*: string
     color*: bool
     aurComments*: bool
     checkIgnored*: bool
@@ -112,10 +113,13 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let db = config.db
   let color = config.colorMode.get
 
-  let user = initialUser.get(currentUser)
-  let tmpRoot = options.opt("TmpDir").get("/tmp/pakku-${USER}")
-    .replace("${UID}", $user.uid)
-    .replace("${USER}", user.name)
+  proc obtainTmpDir(user: User): string =
+    options.opt("TmpDir").get("/tmp/pakku-${USER}")
+      .replace("${UID}", $user.uid)
+      .replace("${USER}", user.name)
+
+  let tmpRootInitial = obtainTmpDir(initialUser.get(currentUser))
+  let tmpRootCurrent = obtainTmpDir(currentUser)
   let aurComments = options.hasKey("AurComments")
   let checkIgnored = options.hasKey("CheckIgnored")
   let printAurNotFound = options.hasKey("PrintAurNotFound")
@@ -123,7 +127,8 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let viewNoDefault = options.hasKey("ViewNoDefault")
   let preBuildCommand = options.opt("PreBuildCommand")
 
-  Config(root: root, db: db, tmpRoot: tmpRoot, color: color,
+  Config(root: root, db: db,
+    tmpRootInitial: tmpRootInitial, tmpRootCurrent: tmpRootCurrent, color: color,
     dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
     ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
