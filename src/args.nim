@@ -34,7 +34,10 @@ iterator splitSingle(valueFull: string, optionsWithParameter: HashSet[OptionKey]
   var i = 0
   while i < valueFull.len:
     let key = $valueFull[i]
-    if (key, false) in optionsWithParameter:
+    if key == "-":
+      raise commandError(trc("%s: invalid option -- '%c'\n") %
+        [getAppFilename(), key], showError = false)
+    elif (key, false) in optionsWithParameter:
       if i == valueFull.high:
         if next.isNone:
           raise commandError(trc("%s: option requires an argument -- '%c'\n") %
