@@ -68,14 +68,20 @@ type
 
 const
   packageRepos: seq[PackageRepo] = @[
-    (["arch"].toSet,
+    (["arch", "parabola"].toSet,
       ["core", "extra", "testing"].toSet,
       ("https://git.archlinux.org/svntogit/packages.git", none(string),
         some("packages/${BASE}"), "repos/${REPO}-${ARCH}")),
-    (["arch"].toSet,
+    (["arch", "parabola"].toSet,
       ["community", "community-testing", "multilib", "multilib-testing"].toSet,
       ("https://git.archlinux.org/svntogit/community.git", none(string),
-        some("packages/${BASE}"), "repos/${REPO}-${ARCH}"))
+        some("packages/${BASE}"), "repos/${REPO}-${ARCH}")),
+    (["parabola"].toSet,
+      ["libre", "libre-testing", "libre-multilib", "libre-multilib-testing",
+        "nonprism", "nonprism-testing", "nonprism-multilib", "nonprism-multilib-testing",
+        "pcr", "pcr-testing", "pcr-multilib", "pcr-multilib-testing"].toSet,
+      ("https://git.parabola.nu/abslibre.git", some("parabola"),
+        none(string), "${REPO}/${BASE}"))
   ]
 
 static:
