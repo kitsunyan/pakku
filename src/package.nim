@@ -89,21 +89,21 @@ static:
         raise newException(SystemError,
           "only single matching repo available: " & os & ":" & repo)
 
-proc readOsId: string =
+proc readOsId: Option[string] =
   var file: File
-  if file.open("/usr/bin/os-release"):
+  if file.open("/usr/lib/os-release"):
     try:
       while true:
         let rawLine = readLine(file)
         if rawLine[0 .. 2] == "ID=":
-          return rawLine[3 .. ^1]
+          return some(rawLine[3 .. ^1])
     except EOFError:
       discard
     except IOError:
       discard
     finally:
       file.close()
-  return "arch"
+  return none(string)
 
 let osId = readOsId()
 
@@ -115,7 +115,7 @@ proc lookupGitRepo*(repo: string, base: string, arch: string): Option[GitRepo] =
       .replace("${ARCH}", arch)
 
   packageRepos
-    .filter(pr => osId in pr.os and repo in pr.repo)
+    .filter(pr => osId.isSome and osid.unsafeGet in pr.os and repo in pr.repo)
     .map(pr => (pr.git.url.replaceAll, pr.git.branch.replaceAll, pr.git.path.replaceAll))
     .optFirst
 
