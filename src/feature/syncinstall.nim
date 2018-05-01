@@ -37,17 +37,20 @@ type
 proc groupsSeq(pkg: ptr AlpmPackage): seq[string] =
   toSeq(pkg.groups.items).map(s => $s)
 
-proc createCloneProgress(config: Config, count: int, printMode: bool):
+proc createCloneProgress(config: Config, count: int, flexible: bool, printMode: bool):
   (proc (update: int, terminate: int) {.closure.}, proc {.closure.}) =
   if count >= 1 and not printMode:
     let (update, terminate) = printProgressShare(config.progressBar, tr"cloning repositories")
     update(0, count)
 
-    proc cloneUpdate(progress: int, newCount: int) {.closure.} =
-      # newCount can be < count if some packages were not found
-      update(max(count - newCount + progress, 0), count)
+    if flexible:
+      proc cloneUpdate(progress: int, newCount: int) {.closure.} =
+        # newCount can be < count if some packages were not found
+        update(max(count - newCount + progress, 0), count)
 
-    (cloneUpdate, terminate)
+      (cloneUpdate, terminate)
+    else:
+      (update, terminate)
   else:
     (proc (a: int, b: int) {.closure.} = discard, proc {.closure.} = discard)
 
@@ -185,7 +188,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
 
   let (aurSuccess, aurFail, newPaths, newAdditionalPkgInfos) =
     if not noaur and aurCheck.len > 0: (block:
-      let (update, terminate) = createCloneProgress(config, aurCheck.len, printMode)
+      let (update, terminate) = createCloneProgress(config, aurCheck.len, true, printMode)
       try:
         withAur():
           let (pkgInfos, additionalPkgInfos, paths) = if printMode: (block:
@@ -1028,7 +1031,7 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   let upgradeRpcInfos = upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo)
   let fullRpcInfos = targetRpcInfos & upgradeRpcInfos
 
-  let (update, terminate) = createCloneProgress(config, fullRpcInfos.len, printMode)
+  let (update, terminate) = createCloneProgress(config, fullRpcInfos.len, true, printMode)
 
   let (pkgInfos, additionalPkgInfos, paths, errors) = if printMode: (block:
       let (pkgInfos, additionalPkgInfos, aerrors) =
@@ -1077,7 +1080,7 @@ proc obtainPacmanBuildTargets(config: Config, pacmanTargets: seq[FullPackageTarg
 
   let (buildPkgInfos, buildPaths, obtainErrorMessages) = if checkPacmanBuildPkgInfos: (block:
       echo(tr"checking official repositories...")
-      let (update, terminate) = createCloneProgress(config, pacmanTargets.len, printMode)
+      let (update, terminate) = createCloneProgress(config, pacmanTargets.len, false, printMode)
       let res = obtainBuildPkgInfos[PackageInfo](config, pacmanTargets, update, true)
       terminate()
       res)

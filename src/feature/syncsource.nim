@@ -33,10 +33,14 @@ proc getFilesOrClear(base: string, repoPath: string, gitSubdir: Option[string]):
     (newSeq[string](), some(tr"$#: failed to clone git repository" % [base]))
 
 proc cloneRepositories(config: Config, targets: seq[BaseTarget],
-  update: (int, int) -> void): (List[CloneResult], List[string]) =
+  update: (int, int) -> void): (List[CloneResult], seq[string], seq[string]) =
+  let (barePaths, berrors) = cloneBareRepos(config,
+    targets.filter(t => t.gitRepo.isSome).map(t => t.gitRepo.unsafeGet),
+    proc (progress: int, count: int) = update(progress, count + targets.len), false)
+
   proc cloneNext(index: int, results: List[CloneResult], messages: List[string]):
     (List[CloneResult], List[string]) =
-    update(index, targets.len)
+    update(barePaths.len + index, barePaths.len + targets.len)
 
     if index >= targets.len:
       (results.reversed, messages.reversed)
@@ -76,7 +80,11 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
         let message = tr"$#: repository not found" % [target.base]
         cloneNext(index + 1, results, message ^& messages)
 
-  cloneNext(0, nil, nil)
+  if berrors.len > 0:
+    (nil, barePaths, berrors)
+  else:
+    let (results, cerrors) = cloneNext(0, nil, nil)
+    (results, barePaths, toSeq(cerrors.items))
 
 proc copyFiles(config: Config, quiet: bool, results: seq[CloneResult]): List[string] =
   proc copyNext(index: int, messages: List[string]): List[string] =
@@ -128,7 +136,7 @@ proc cloneAndCopy(config: Config, quiet: bool,
     else:
       printProgressShare(config.progressBar, tr"cloning repositories")
 
-  let (results, rerrors) = cloneRepositories(config, baseTargets, update)
+  let (results, barePaths, rerrors) = cloneRepositories(config, baseTargets, update)
   terminate()
   for e in rerrors: printError(config.color, e)
 
@@ -137,6 +145,8 @@ proc cloneAndCopy(config: Config, quiet: bool,
 
   for result in results:
     removeDirQuiet(result.path)
+  for path in barePaths:
+    removeDirQuiet(path)
   discard rmdir(config.tmpRootCurrent)
 
   if rerrors != nil and cerrors != nil:

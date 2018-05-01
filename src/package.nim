@@ -53,7 +53,8 @@ type
 
   GitRepo* = tuple[
     url: string,
-    branch: string,
+    bareName: Option[string],
+    branch: Option[string],
     path: string
   ]
 
@@ -69,12 +70,12 @@ const
   packageRepos: seq[PackageRepo] = @[
     (["arch"].toSet,
       ["core", "extra", "testing"].toSet,
-      ("https://git.archlinux.org/svntogit/packages.git",
-        "packages/${BASE}", "repos/${REPO}-${ARCH}")),
+      ("https://git.archlinux.org/svntogit/packages.git", none(string),
+        some("packages/${BASE}"), "repos/${REPO}-${ARCH}")),
     (["arch"].toSet,
       ["community", "community-testing", "multilib", "multilib-testing"].toSet,
-      ("https://git.archlinux.org/svntogit/community.git",
-        "packages/${BASE}", "repos/${REPO}-${ARCH}"))
+      ("https://git.archlinux.org/svntogit/community.git", none(string),
+        some("packages/${BASE}"), "repos/${REPO}-${ARCH}"))
   ]
 
 static:
@@ -88,6 +89,23 @@ static:
       if packageRepos.filter(pr => osValue in pr.os and repoValue in pr.repo).len >= 2:
         raise newException(SystemError,
           "only single matching repo available: " & os & ":" & repo)
+
+  # test unique url <> bareName links
+  let bareNameToUrl = lc[(x, r.git.url) |
+    (r <- packageRepos, x <- r.git.bareName), (string, string)].toTable
+  let urlToBareName = lc[(r.git.url, x) |
+    (r <- packageRepos, x <- r.git.bareName), (string, string)].toTable
+
+  template testBareNamesAndUrls(m1: untyped, m2: untyped) =
+    for x1, x2 in m1:
+      try:
+        if m2[x2] != x1:
+          raise newException(SystemError, "")
+      except:
+        raise newException(SystemError, "Invalid url <> bareName links")
+
+  testBareNamesAndUrls(bareNameToUrl, urlToBareName)
+  testBareNamesAndUrls(urlToBareName, bareNameToUrl)
 
 proc readOsId: Option[string] =
   var file: File
@@ -108,7 +126,7 @@ proc readOsId: Option[string] =
 let osId = readOsId()
 
 proc lookupGitRepo*(repo: string, base: string, arch: string): Option[GitRepo] =
-  template replaceAll(gitPart: string): string =
+  proc replaceAll(gitPart: string): string =
     gitPart
       .replace("${REPO}", repo)
       .replace("${BASE}", base)
@@ -116,7 +134,8 @@ proc lookupGitRepo*(repo: string, base: string, arch: string): Option[GitRepo] =
 
   packageRepos
     .filter(pr => osId.isSome and osid.unsafeGet in pr.os and repo in pr.repo)
-    .map(pr => (pr.git.url.replaceAll, pr.git.branch.replaceAll, pr.git.path.replaceAll))
+    .map(pr => (pr.git.url.replaceAll, pr.git.bareName,
+      pr.git.branch.map(replaceAll), pr.git.path.replaceAll))
     .optFirst
 
 template repoPath*(tmpRoot: string, base: string): string =

@@ -33,11 +33,6 @@ type
     repo: string
   ]
 
-  LookupGitResult = tuple[
-    group: LookupBaseGroup,
-    git: Option[GitRepo]
-  ]
-
 proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: seq[Argument]] =
   let refreshCount = args.count(%%%"refresh")
   if refreshCount > 0:
@@ -419,17 +414,70 @@ proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): 
   else:
     pkgInfos
 
-proc clonePackageRepoInternal(config: Config, base: string, version: string,
-  git: GitRepo, dropPrivileges: bool): Option[string] =
-  let tmpRoot = config.tmpRoot(dropPrivileges)
-  let repoPath = repoPath(tmpRoot, base)
+proc cloneBareRepo(config: Config, bareName: string, url: string,
+  dropPrivileges: bool): Option[string] =
+  let fullName = bareName & ".git"
+  let repoPath = repoPath(config.tmpRoot(dropPrivileges), fullName)
   removeDirQuiet(repoPath)
 
   if forkWait(() => (block:
     if not dropPrivileges or dropPrivileges():
-      execResult(gitCmd, "-C", tmpRoot,
-        "clone", "-q", git.url, "-b", git.branch,
-        "--single-branch", base)
+      execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
+        "clone", "-q", "--bare", url, fullName)
+    else:
+      quit(1))) == 0:
+    some(repoPath)
+  else:
+    removeDirQuiet(repoPath)
+    none(string)
+
+proc cloneBareRepos*(config: Config, gitRepos: seq[GitRepo],
+  progressCallback: (int, int) -> void, dropPrivileges: bool): (seq[string], seq[string]) =
+  let message = ensureTmpOrError(config, dropPrivileges)
+  if message.isSome:
+    (@[], @[message.unsafeGet])
+  else:
+    let bare = gitRepos
+      .filter(t => t.bareName.isSome)
+      .map(r => (r.bareName.unsafeGet, r.url))
+      .deduplicate
+
+    proc cloneNext(index: int, paths: List[string], messages: List[string]):
+      (List[string], List[string]) =
+      progressCallback(index, bare.len)
+
+      if index >= bare.len:
+        (paths.reversed, messages.reversed)
+      else:
+        let (bareName, url) = bare[index]
+        let repoPath = cloneBareRepo(config, bareName, url, dropPrivileges)
+        if repoPath.isSome:
+          cloneNext(index + 1, repoPath.unsafeGet ^& paths, messages)
+        else:
+          let message = tr"$#: failed to clone git repository" % [bareName]
+          cloneNext(index + 1, paths, message ^& messages)
+
+    let (paths, messages) = cloneNext(0, nil, nil)
+    (toSeq(paths.items), toSeq(messages.items))
+
+proc clonePackageRepoInternal(config: Config, base: string, version: string,
+  git: GitRepo, dropPrivileges: bool): Option[string] =
+  let repoPath = repoPath(config.tmpRoot(dropPrivileges), base)
+  removeDirQuiet(repoPath)
+
+  let url = if git.bareName.isSome:
+      repoPath(config.tmpRoot(dropPrivileges), git.bareName.unsafeGet & ".git")
+    else:
+      git.url
+
+  if forkWait(() => (block:
+    if not dropPrivileges or dropPrivileges():
+      if git.branch.isSome:
+        execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
+          "clone", "-q", url, "-b", git.branch.unsafeGet, "--single-branch", base)
+      else:
+        execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
+          "clone", "-q", url, "--single-branch", base)
     else:
       quit(1))) == 0:
     let commit = bisectVersion(repoPath, config.debug, none(string),
@@ -466,7 +514,7 @@ proc clonePackageRepo*(config: Config, base: string, version: string,
 proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
   pacmanTargetNames: seq[string], progressCallback: (int, int) -> void, dropPrivileges: bool):
   (seq[PackageInfo], seq[string], seq[string]) =
-  let lookupResults: seq[LookupGitResult] = bases
+  let lookupResults: seq[tuple[group: LookupBaseGroup, git: Option[GitRepo]]] = bases
     .map(b => (b, lookupGitRepo(b.repo, b.base, b.arch)))
   let notFoundRepos = lookupResults.filter(r => r.git.isNone)
 
@@ -478,45 +526,56 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
     if message.isSome:
       (@[], @[], @[message.unsafeGet])
     else:
-      proc findCommitAndGetSrcInfo(base: string, version: string,
-        repo: string, git: GitRepo): tuple[pkgInfos: seq[PackageInfo], path: Option[string]] =
-        let repoPath = clonePackageRepoInternal(config, base, version, git, dropPrivileges)
+      let (barePaths, berrors) = cloneBareRepos(config, lookupResults.map(r => r.git.unsafeGet),
+        proc (progress: int, count: int) = progressCallback(progress, count + lookupResults.len),
+        dropPrivileges)
 
-        if repoPath.isSome:
-          let srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/" & git.path)
-          let pkgInfos = parseSrcInfo(repo, srcInfo, config.arch,
-            git.url, some(git.path))
-            .filter(i => i.version == version)
-          (pkgInfos, repoPath)
-        else:
-          (newSeq[PackageInfo](), none(string))
-
-      progressCallback(0, lookupResults.len)
-      let (pkgInfosWithPathsReversed, _) = lookupResults.foldl(block:
-        let (list, index) = a
-        let res = findCommitAndGetSrcInfo(b.group.base, b.group.version,
-          b.group.repo, b.git.get) ^& list
-        progressCallback(index + 1, lookupResults.len)
-        (res, index + 1),
-        (list[tuple[pkgInfos: seq[PackageInfo], path: Option[string]]](), 0))
-
-      let pkgInfosWithPaths = pkgInfosWithPathsReversed.reversed
-      let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
-      let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
-
-      let pkgInfosTable = pkgInfos.map(i => (i.name, i)).toTable
-
-      let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
-        x <- pkgInfosTable.opt(y)), PackageInfo]
-      let errorMessages = pacmanTargetNames
-        .filter(n => not pkgInfosTable.hasKey(n))
-        .map(n => tr"$#: failed to get package info" % [n])
-
-      if errorMessages.len > 0:
-        for path in paths:
+      if berrors.len > 0:
+        for path in barePaths:
           removeDirQuiet(path)
-      discard rmdir(config.tmpRoot(dropPrivileges))
-      (foundPkgInfos, paths, errorMessages)
+        discard rmdir(config.tmpRoot(dropPrivileges))
+        (newSeq[PackageInfo](), barePaths, berrors)
+      else:
+        proc findCommitAndGetSrcInfo(base: string, version: string,
+          repo: string, git: GitRepo): tuple[pkgInfos: seq[PackageInfo], path: Option[string]] =
+          let repoPath = clonePackageRepoInternal(config, base, version, git, dropPrivileges)
+
+          if repoPath.isSome:
+            let srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/" & git.path)
+            let pkgInfos = parseSrcInfo(repo, srcInfo, config.arch,
+              git.url, some(git.path))
+              .filter(i => i.version == version)
+            (pkgInfos, repoPath)
+          else:
+            (newSeq[PackageInfo](), none(string))
+
+        let (pkgInfosWithPathsReversed, _) = lookupResults.foldl(block:
+          let (list, index) = a
+          let res = findCommitAndGetSrcInfo(b.group.base, b.group.version,
+            b.group.repo, b.git.unsafeGet) ^& list
+          progressCallback(barePaths.len + index + 1, barePaths.len + lookupResults.len)
+          (res, index + 1),
+          (list[tuple[pkgInfos: seq[PackageInfo], path: Option[string]]](), 0))
+
+        let pkgInfosWithPaths = pkgInfosWithPathsReversed.reversed
+        let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
+        let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
+
+        let pkgInfosTable = pkgInfos.map(i => (i.name, i)).toTable
+
+        let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
+          x <- pkgInfosTable.opt(y)), PackageInfo]
+        let errorMessages = pacmanTargetNames
+          .filter(n => not pkgInfosTable.hasKey(n))
+          .map(n => tr"$#: failed to get package info" % [n])
+
+        if errorMessages.len > 0:
+          for path in barePaths:
+            removeDirQuiet(path)
+          for path in paths:
+            removeDirQuiet(path)
+        discard rmdir(config.tmpRoot(dropPrivileges))
+        (foundPkgInfos, barePaths & paths, errorMessages)
 
 proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
   pacmanTargets: seq[FullPackageTarget[T]], progressCallback: (int, int) -> void,
