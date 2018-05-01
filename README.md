@@ -15,6 +15,7 @@ Basically, pakku supports the following features:
 - Removing make dependencies after building
 - Searching and querying AUR packages
 - Reading comments for AUR packages
+- PKGBUILD retrieving
 - Pacman integration
 
 In other words, it does the same things any AUR helper capable of.
