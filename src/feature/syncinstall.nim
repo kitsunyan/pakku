@@ -573,9 +573,9 @@ proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo],
       a & b,
     newSeq[PackageInfo]())
 
-proc resolveDependencies(config: Config, pacmanTargets: seq[FullPackageTarget[PackageInfo]],
-  pkgInfos: seq[PackageInfo], additionalPkgInfos: seq[PackageInfo],
-  printMode: bool, directSome: bool, noaur: bool): (bool, Table[PackageReference, SatisfyResult],
+proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
+  additionalPkgInfos: seq[PackageInfo], printMode: bool, directSome: bool,
+  noaur: bool): (bool, Table[PackageReference, SatisfyResult],
   seq[string], seq[seq[seq[PackageInfo]]], seq[string]) =
   if pkgInfos.len > 0 and not printMode:
     if directSome:
@@ -750,8 +750,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
   else:
     let commonArgs = args.keepOnlyOptions(commonOptions, upgradeCommonOptions)
     let (resolveSuccess, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
-      resolveDependencies(config, pacmanTargets, pkgInfos, additionalPkgInfos,
-        false, directSome, noaur)
+      resolveDependencies(config, pkgInfos, additionalPkgInfos, false, directSome, noaur)
     let paths = initialPaths & dependencyPaths
 
     let confirmAndResolveCode = if resolveSuccess:
@@ -846,7 +845,7 @@ proc handlePrint(args: seq[Argument], config: Config, printFormat: string, upgra
   let directPacmanTargets = pacmanTargets.map(`$`)
 
   let (resolveSuccess, _, additionalPacmanTargets, basePackages, _) =
-    resolveDependencies(config, pacmanTargets, pkgInfos, additionalPkgInfos, true, false, noaur)
+    resolveDependencies(config, pkgInfos, additionalPkgInfos, true, false, noaur)
 
   let code = if directPacmanTargets.len > 0 or
     additionalPacmanTargets.len > 0 or upgradeCount > 0: (block:
