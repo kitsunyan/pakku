@@ -19,8 +19,8 @@ _pakku() {
   remove=('cascade dbonly nodeps assume-installed nosave print recursive unneeded' 'c n p s u')
   sync=('asdeps asexplicit clean dbonly downloadonly force groups ignore ignoregroup
          info list needed nodeps assume-installed print refresh recursive search sysupgrade
-         build keyserver noaur'
-        'c g i l p s u w y')
+         build keyserver noaur source'
+        'c g i l n p s u w y z')
   upgrade=('asdeps asexplicit force needed nodeps assume-installed print recursive' 'p')
   common=('arch cachedir color config confirm dbpath debug gpgdir help hookdir logfile
            noconfirm noprogressbar noscriptlet quiet root verbose' 'b d h q r v')
