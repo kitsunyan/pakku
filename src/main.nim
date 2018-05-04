@@ -17,9 +17,9 @@ proc passValidation(args: seq[Argument], config: Config,
   if checkArgs.len == 0:
     let needRoot = (nonRootArgs.len == 0 and args.check(rootArgs)) or
       (nonRootArgs.len > 0 and (not args.check(nonRootArgs) or args.check(rootArgs)))
-    return pacmanExec(needRoot, config.color, args.filterExtensions(true, true))
+    return pacmanExec(needRoot, config.color, args.filterExtensions(true, true, opts))
   else:
-    let extensions = args.filterExtensions(false, false)
+    let extensions = args.filterExtensions(false, false, opts)
     if extensions.len == 0:
       return pacmanExec(false, config.color, args)
     else:
@@ -255,8 +255,7 @@ proc run(parsedArgs: seq[Argument], config: Config):
         of OperationType.upgrade:
           handleUpgrade(parsedArgs, config)
         else:
-          pacmanExec(false, config.color,
-            parsedArgs.filterExtensions(true, true))
+          passValidation(parsedArgs, config, [], [], allOptions)
 
 let runResult = if init.success.isSome:
     run(init.success.unsafeGet.parsedArgs, init.success.unsafeGet.config)

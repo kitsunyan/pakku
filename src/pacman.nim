@@ -245,9 +245,16 @@ proc checkOpGroup*(args: seq[Argument], group: OpGroup): bool =
 proc `%%%`*(long: string): OptionPair =
   allOptions.filter(o => o.pair.long == long)[0].pair
 
-proc filterExtensions*(args: seq[Argument],
-  removeMatches: bool, keepTargets: bool): seq[Argument] =
-  let argsSeq = lc[x.pair | (x <- allOptions, x.extension), OptionPair]
+proc filterExtensions*(args: seq[Argument], removeMatches: bool, keepTargets: bool,
+  opts: varargs[seq[CommandOption]]): seq[Argument] =
+  let optsSeq = @opts
+  let optsFilter = if removeMatches:
+      lc[x | (y <- optsSeq, x <- y), CommandOption]
+    else: (block:
+      let pairs = lc[x.pair | (y <- optsSeq, x <- y), OptionPair].toSet
+      lc[x | (x <- allOptions, not (x.pair in pairs)), CommandOption])
+
+  let argsSeq = lc[x.pair | (x <- optsFilter, x.extension), OptionPair]
   args.filter(removeMatches, keepTargets, argsSeq)
 
 proc obtainConflictsPairs(conflicts: seq[ConflictingOptions]): Table[string, seq[OptionPair]] =

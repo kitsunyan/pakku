@@ -1233,7 +1233,8 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       pkgInfos, additionalPkgInfos, paths) = resolveBuildTargets(config, targets,
       printFormat.isSome, upgradeCount, noconfirm, needed, noaur, build)
 
-    let pacmanArgs = callArgs.filterExtensions(true, true)
+    let pacmanArgs = callArgs.filterExtensions(true, true,
+      commonOptions, transactionOptions, upgradeOptions, syncOptions)
     if code != 0:
       code
     elif printFormat.isSome:
