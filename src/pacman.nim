@@ -162,11 +162,6 @@ const
     o("machinereadable")
   ]
 
-  upgradeCommonOptions*: seq[CommandOption] = @[
-    o("noprogressbar"),
-    o("force")
-  ]
-
   allOptions* = commonOptions & transactionOptions &
     upgradeOptions & queryOptions & removeOptions & syncOptions &
     databaseOptions & filesOptions
@@ -184,19 +179,6 @@ const
 
   allConflictingOptions = syncConflictingOptions
 
-proc checkOptions(check: seq[CommandOption],
-  where: openArray[seq[CommandOption]]) {.compileTime.} =
-  let whereSeq = @where
-  let whereSet = lc[x.pair | (y <- whereSeq, x <- y), OptionPair].toSet
-  for c in check:
-    if not (c.pair in whereSet):
-      raise newException(SystemError,
-        "invalid options definition: " & $c.pair)
-
-static:
-  # options test
-  checkOptions(upgradeCommonOptions, [commonOptions, transactionOptions, upgradeOptions])
-
 proc getOperation*(args: seq[Argument]): OperationType =
   let matchedOps = args
     .map(arg => operations
@@ -212,11 +194,11 @@ proc getOperation*(args: seq[Argument]): OperationType =
     OperationType.invalid
 
 proc filterOptions*(args: seq[Argument], removeMatches: bool, keepTargets: bool,
-  includeOptions: bool, opts: varargs[seq[CommandOption]]): seq[Argument] =
+  includeOperations: bool, opts: varargs[seq[CommandOption]]): seq[Argument] =
   let optsSeq = @opts
   let optsPairSeq = lc[x.pair | (y <- optsSeq, x <- y), OptionPair]
 
-  let work = if includeOptions:
+  let work = if includeOperations:
       (optsPairSeq & operations.map(o => o.pair))
     else:
       optsPairSeq

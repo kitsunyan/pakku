@@ -738,7 +738,10 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
     clearPaths(initialPaths)
     directCode
   else:
-    let commonArgs = args.keepOnlyOptions(commonOptions, upgradeCommonOptions)
+    let commonArgs = args
+      .keepOnlyOptions(commonOptions, transactionOptions, upgradeOptions)
+      .filter(true, false, %%%"asdeps", %%%"asexplicit", %%%"needed")
+
     let (resolveSuccess, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
       resolveDependencies(config, pkgInfos, additionalPkgInfos, false, directSome, noaur)
     let paths = initialPaths & dependencyPaths

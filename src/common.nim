@@ -37,7 +37,7 @@ proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: 
   let refreshCount = args.count(%%%"refresh")
   if refreshCount > 0:
     let code = pacmanRun(true, color, args
-      .keepOnlyOptions(commonOptions, upgradeCommonOptions) &
+      .keepOnlyOptions(commonOptions, transactionOptions, upgradeOptions) &
       ("S", none(string), ArgumentType.short) &
       ("y", none(string), ArgumentType.short).repeat(refreshCount))
 
