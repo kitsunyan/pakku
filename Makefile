@@ -19,7 +19,7 @@ DIST = \
 	COPYING \
 	Makefile \
 	pakku.conf \
-	completion/bash.in \
+	completion/bash.patch \
 	completion/make.sh \
 	doc/asciidoc.conf \
 	${MAN_PAGES:=.txt} \
@@ -77,7 +77,7 @@ all: \
 	${TARGETS} \
 	${TARGETS_NODIST}
 
-completion/bash: completion/make.sh completion/bash.in
+completion/bash: completion/make.sh completion/bash.patch
 	@echo "GEN: $@"
 	@(cd completion && ./make.sh)
 

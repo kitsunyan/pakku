@@ -1,0 +1,19 @@
+--- a/bash
++++ b/bash
+@@ -50,2 +50,3 @@
+-         info list needed nodeps assume-installed print refresh recursive search sysupgrade'
+-        'c g i l p s u w y')
++         info list needed nodeps assume-installed print refresh recursive search sysupgrade
++         build keyserver noaur source'
++        'c g i l n p s u w y z')
+@@ -64,1 +65,1 @@
+-    ! $prev = --@(cachedir|color|config|dbpath|help|hookdir|gpgdir|logfile|root|version) ]]
++    ! $prev = --@(cachedir|color|config|dbpath|help|hookdir|gpgdir|keyserver|logfile|root|version) ]]
+@@ -81,1 +82,1 @@
+-          _pacman_pkg Slq;;
++          _arch_compgen "`pakku -Ssq "$cur" 2> /dev/null`";;
+@@ -93,3 +94,1 @@
+-complete -F _pacman -o default pacman
+-complete -F _makepkg -o default makepkg
+-complete -F _pacman_key -o default pacman-key
++complete -F _pakku -o default pakku

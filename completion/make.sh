@@ -2,11 +2,20 @@
 
 pacman_bash_completion='/usr/share/bash-completion/completions/pacman'
 
-(IFS=; while read -r line; do
-  [ "${line:0:12}" = 'make_import ' ] && {
-    grep -Poz '(?<=\n)'"${line:12}"'\(\) \{\n(.*\n)*?\}' "$pacman_bash_completion" |
-    xargs -0
-  } || {
-    echo "$line"
-  }
-done) < 'bash.in' > 'bash'
+function delete-shell-fn() {
+  perl -0777 -pe 's/\n'"$1"'\(\) *\{\n([^}].*\n)*\}\n*/\n\n/g;s/\n{3,}/\n\n/g'
+}
+
+cat "$pacman_bash_completion" |
+delete-shell-fn '_pacman_keyids' |
+delete-shell-fn '_pacman_key' |
+delete-shell-fn '_makepkg' |
+sed 's/^_pacman() {$/_pakku() {/' \
+> 'bash' || {
+  rm 'bash'
+  exit 1
+}
+patch -sNp1 -r - --no-backup-if-mismatch -i 'bash.patch' || {
+  rm 'bash'
+  exit 1
+}
