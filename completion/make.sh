@@ -10,6 +10,14 @@ function error() {
 }
 
 function apply-patch() {
+  for f in "$@"; do
+    patch -sNp1 --dry-run -i "$f" > /dev/null && {
+      patch -sNp1 -r - --no-backup-if-mismatch -i "$f"
+      return "$?"
+    }
+  done
+
+  # show error applying first patch
   patch -sNp1 -r - --no-backup-if-mismatch -i "$1"
 }
 
@@ -30,7 +38,7 @@ function delete-shell-array() {
   > 'bash' ||
   error 'bash'
 
-  apply-patch 'bash.patch' ||
+  apply-patch 'bash.patch' 'bash-git.patch' ||
   error 'bash'
 
   exit 0
@@ -51,7 +59,7 @@ function delete-shell-array() {
   > 'zsh' ||
   error 'zsh'
 
-  apply-patch 'zsh.patch' ||
+  apply-patch 'zsh.patch' 'zsh-git.patch' ||
   error 'zsh'
 
   exit 0

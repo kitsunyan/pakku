@@ -21,8 +21,10 @@ DIST = \
 	Makefile \
 	pakku.conf \
 	completion/bash.patch \
+	completion/bash-git.patch \
 	completion/make.sh \
 	completion/zsh.patch \
+	completion/zsh-git.patch \
 	doc/asciidoc.conf \
 	${MAN_PAGES:=.txt} \
 	lib/*.nim \
@@ -80,11 +82,17 @@ all: \
 	${TARGETS} \
 	${TARGETS_NODIST}
 
-completion/bash: completion/make.sh completion/bash.patch
+completion/bash: \
+	completion/make.sh \
+	completion/bash.patch \
+	completion/bash-git.patch
 	@echo "GEN: $@"
 	@(cd completion && ./make.sh 'bash')
 
-completion/zsh: completion/make.sh completion/zsh.patch
+completion/zsh: \
+	completion/make.sh \
+	completion/zsh.patch \
+	completion/zsh-git.patch
 	@echo "GEN: $@"
 	@(cd completion && ./make.sh 'zsh')
 
