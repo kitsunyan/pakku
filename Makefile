@@ -10,6 +10,7 @@ TARGETS =  \
 	completion/bash \
 	completion/zsh \
 	lib/bisect \
+	lib/install \
 	src/pakku \
 	${MAN_PAGES}
 
@@ -117,6 +118,12 @@ lib/bisect: lib/bisect.nim
 	--nimcache:"${NIM_CACHE_DIR}/bisect" \
 	-o:"$@" "$<"
 
+lib/install: lib/install.nim
+	@echo "NIM: $@"
+	@nim c ${NIM_OPTIONS} \
+	--nimcache:"${NIM_CACHE_DIR}/install" \
+	-o:"$@" "$<"
+
 src/pakku: src/main.nim $(shell find src -name \*.nim)
 	@echo "NIM: $@"
 	@nim c ${NIM_OPTIONS} \
@@ -147,6 +154,7 @@ install:
 	$(call install,644,'doc/pakku.8','${MANDIR}/man8/pakku.8')
 	$(call install,644,'doc/pakku.conf.5','${MANDIR}/man5/pakku.conf.5')
 	$(call install,755,'lib/bisect','${PKGLIBDIR}/bisect')
+	$(call install,755,'lib/install','${PKGLIBDIR}/install')
 	$(call install,755,'src/pakku','${BINDIR}/pakku')
 	$(call install,644,'pakku.conf','${SYSCONFDIR}/pakku.conf')
 
@@ -156,13 +164,14 @@ uninstall:
 	$(call uninstall,'${MANDIR}/man8','pakku.8')
 	$(call uninstall,'${MANDIR}/man5','pakku.conf.5')
 	$(call uninstall,'${PKGLIBDIR}','bisect')
+	$(call uninstall,'${PKGLIBDIR}','install')
 	$(call uninstall,'${BINDIR}','pakku')
 	$(call uninstall,'${SYSCONFDIR}','pakku.conf')
 
 distcheck:
 	@rm -rf 'pakku-${RVERSION}'
 	@mkdir 'pakku-${RVERSION}'
-	@for f in ${DIST}; do cp --parents $$f 'pakku-${RVERSION}'; done
+	@for f in ${DIST}; do cp -d --parents $$f 'pakku-${RVERSION}'; done
 
 	@sed -i 'pakku-${RVERSION}/Makefile' \
 	-e 's/^VERSION =.*/VERSION = ${RVERSION}/' \

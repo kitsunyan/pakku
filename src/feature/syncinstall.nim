@@ -534,33 +534,23 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       handleTmpRoot(false)
       (newSeq[(string, string)](), 1)
     else:
+      let pacmanParams = pacmanCmd & pacmanParams(config.color,
+        commonArgs & ("U", none(string), ArgumentType.short))
       let asdeps = install.filter(p => not (p.name in explicits)).map(p => p.file)
       let asexplicit = install.filter(p => p.name in explicits).map(p => p.file)
 
-      proc doInstall(files: seq[string], addArgs: seq[Argument]): int =
-        if files.len > 0:
-          pacmanRun(true, config.color, commonArgs &
-            ("U", none(string), ArgumentType.short) & addArgs &
-            files.map(f => (f, none(string), ArgumentType.target)))
-        else:
-          0
+      let installParams = sudoPrefix & (pkgLibDir & "/install") & config.cache &
+        $pacmanParams.len & pacmanParams & $asdeps.len & asdeps & $asexplicit.len & asexplicit
 
-      let asdepsCode = doInstall(asdeps,
-        @[("asdeps", none(string), ArgumentType.long)])
-      if asdepsCode != 0:
+      let code = forkWait(() => execResult(installParams))
+      if code != 0:
         handleTmpRoot(false)
-        (newSeq[(string, string)](), asdepsCode)
+        (newSeq[(string, string)](), code)
       else:
-        let asexplicitCode = doInstall(asexplicit,
-          @[("asexplicit", none(string), ArgumentType.long)])
-        if asexplicitCode != 0:
-          handleTmpRoot(false)
-          (newSeq[(string, string)](), asexplicitCode)
-        else:
-          handleTmpRoot(true)
-          let installedAs = lc[(r.name.unsafeGet, r.pkgInfo.name) | (br <- buildResults,
-            r <- br.replacePkgInfos, r.name.isSome), (string, string)]
-          (installedAs, 0)
+        handleTmpRoot(true)
+        let installedAs = lc[(r.name.unsafeGet, r.pkgInfo.name) | (br <- buildResults,
+          r <- br.replacePkgInfos, r.name.isSome), (string, string)]
+        (installedAs, 0)
 
 proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo],
   config: Config, printWarning: bool): seq[PackageInfo] =

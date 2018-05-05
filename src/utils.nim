@@ -285,6 +285,17 @@ proc dropPrivileges*(): bool =
   else:
     return true
 
+proc checkExec(file: string): bool =
+  var statv: Stat
+  stat(file, statv) == 0 and (statv.st_mode and S_IXUSR) == S_IXUSR
+
+let sudoPrefix*: seq[string] = if checkExec(sudoCmd):
+    @[sudoCmd]
+  elif checkExec(suCmd):
+    @[suCmd, "root", "-c", "exec \"$@\"", "--", "sh"]
+  else:
+    @[]
+
 var intSigact: SigAction
 intSigact.sa_handler = SIG_DFL
 discard sigaction(SIGINT, intSigact)

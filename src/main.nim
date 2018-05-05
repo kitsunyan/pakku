@@ -90,7 +90,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
     let printMode = args.check(%%%"print") or args.check(%%%"print-format")
 
     if currentUser.uid != 0 and config.sudoExec and not printMode:
-      let collectedArgs = @[sudoCmd, getAppFilename()] &
+      let collectedArgs = sudoPrefix & getAppFilename() &
         lc[x | (y <- args, x <- y.collectArg), string]
       execResult(collectedArgs)
     else:

@@ -21,12 +21,14 @@ type
   PacmanConfig* = object of CommonConfig
     rootOption*: Option[string]
     dbOption*: Option[string]
+    cacheOption*: Option[string]
     gpgOption*: Option[string]
     colorMode*: ColorMode
 
   Config* = object of CommonConfig
     root*: string
     db*: string
+    cache*: string
     tmpRootInitial*: string
     tmpRootCurrent*: string
     color*: bool
@@ -105,12 +107,16 @@ proc db*(config: PacmanConfig): string =
     let workRoot = if root == "/": "" else: root
     workRoot & localStateDir & "/lib/pacman/"
 
+proc cache*(config: PacmanConfig): string =
+  config.cacheOption.get(localStateDir & "/cache/pacman/pkg")
+
 proc obtainConfig*(config: PacmanConfig): Config =
   let (configTable, _) = readConfigFile(sysConfDir & "/pakku.conf")
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
 
   let root = config.root
   let db = config.db
+  let cache = config.cache
   let color = config.colorMode.get
 
   proc obtainTmpDir(user: User): string =
@@ -127,7 +133,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let viewNoDefault = options.hasKey("ViewNoDefault")
   let preBuildCommand = options.opt("PreBuildCommand")
 
-  Config(root: root, db: db,
+  Config(root: root, db: db, cache: cache,
     tmpRootInitial: tmpRootInitial, tmpRootCurrent: tmpRootCurrent, color: color,
     dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,

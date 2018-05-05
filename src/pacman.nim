@@ -277,29 +277,20 @@ proc checkConflicts*(args: seq[Argument],
   lc[(c.left, w) | (c <- conflicts, args.check(c.left.full),
     w <- c.right, args.check(w.full)), (string, string)].optFirst
 
-proc checkExec(file: string): bool =
-  var statv: Stat
-  stat(file, statv) == 0 and (statv.st_mode and S_IXUSR) == S_IXUSR
+proc pacmanParams*(color: bool, args: varargs[Argument]): seq[string] =
+  let colorStr = if color: "always" else: "never"
+  let argsSeq = ("color", some(colorStr), ArgumentType.long) &
+    @args.filter(arg => not arg.matchOption(%%%"color"))
+  lc[x | (y <- argsSeq, x <- y.collectArg), string]
 
-proc pacmanExec(root: bool, args: varargs[string]): int =
-  let exec = if root and checkExec(sudoCmd):
-      @[sudoCmd, pacmanCmd] & @args
-    elif root and checkExec(suCmd):
-      @[suCmd, "root", "-c", "exec \"$@\"", "--", "sh", pacmanCmd] & @args
-    else:
-      @[pacmanCmd] & @args
-
+proc pacmanExecInternal(root: bool, params: varargs[string]): int =
+  let exec = if root: sudoPrefix & pacmanCmd & @params else: pacmanCmd & @params
   execResult(exec)
 
 proc pacmanExec*(root: bool, color: bool, args: varargs[Argument]): int =
   let useRoot = root and getuid() != 0
-  let colorStr = if color: "always" else: "never"
-
-  let argsSeq = ("color", some(colorStr), ArgumentType.long) &
-    @args.filter(arg => not arg.matchOption(%%%"color"))
-  let collectedArgs = lc[x | (y <- argsSeq, x <- y.collectArg), string]
-
-  pacmanExec(useRoot, collectedArgs)
+  let params = pacmanParams(color, args)
+  pacmanExecInternal(useRoot, params)
 
 proc pacmanRun*(root: bool, color: bool, args: varargs[Argument]): int =
   let argsSeq = @args
@@ -308,7 +299,7 @@ proc pacmanRun*(root: bool, color: bool, args: varargs[Argument]): int =
 proc pacmanValidateAndThrow(args: varargs[Argument]): void =
   let argsSeq = @args
   let collectedArgs = lc[x | (y <- argsSeq, x <- y.collectArg), string]
-  let code = forkWait(() => pacmanExec(false, "-T" & collectedArgs))
+  let code = forkWait(() => pacmanExecInternal(false, "-T" & collectedArgs))
   if code != 0:
     raise haltError(code)
 
@@ -320,6 +311,7 @@ proc getMachineName: Option[string] =
 proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): PacmanConfig =
   let root = table.opt("RootDir")
   let db = table.opt("DBPath")
+  let cache = table.opt("CacheDir")
   let gpg = table.opt("GPGDir")
   let color = if table.hasKey("Color"): ColorMode.colorAuto else: ColorMode.colorNever
   let verbosePkgList = table.hasKey("VerbosePkgLists")
@@ -332,9 +324,10 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
     raise commandError(tr"can not get the architecture",
       colorNeeded = some(color.get))
 
-  PacmanConfig(rootOption: root, dbOption: db, gpgOption: gpg, dbs: dbs, arch: archFinal,
-    colorMode: color, debug: false, progressBar: true, verbosePkgList: verbosePkgList,
-    pgpKeyserver: none(string), ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
+  PacmanConfig(rootOption: root, dbOption: db, cacheOption: cache, gpgOption: gpg,
+    dbs: dbs, arch: archFinal, colorMode: color, debug: false, progressBar: true,
+    verbosePkgList: verbosePkgList, pgpKeyserver: none(string),
+    ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   proc getAll(pair: OptionPair): seq[string] =
@@ -356,6 +349,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
 
   let root = getAll(%%%"root").optLast.orElse(defaultConfig.rootOption)
   let db = getAll(%%%"dbpath").optLast.orElse(defaultConfig.dbOption)
+  let cache = getAll(%%%"cachedir").optLast.orElse(defaultConfig.cacheOption)
   let gpg = getAll(%%%"gpgdir").optLast.orElse(defaultConfig.gpgOption)
   let arch = getAll(%%%"arch").optLast.get(defaultConfig.arch)
   let colorStr = getAll(%%%"color").optLast.get($defaultConfig.colorMode)
@@ -398,7 +392,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
             file.close()
         pgpKeyserver)
 
-  let config = PacmanConfig(rootOption: root, dbOption: db, gpgOption: gpg,
+  let config = PacmanConfig(rootOption: root, dbOption: db, cacheOption: cache, gpgOption: gpg,
     dbs: defaultConfig.dbs, arch: arch, colorMode: color, debug: debug,
     progressBar: progressBar, verbosePkgList: defaultConfig.verbosePkgList,
     pgpKeyserver: pgpKeyserver, ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
