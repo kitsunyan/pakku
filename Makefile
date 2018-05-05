@@ -8,6 +8,7 @@ MAN_PAGES = \
 
 TARGETS =  \
 	completion/bash \
+	completion/zsh \
 	lib/bisect \
 	src/pakku \
 	${MAN_PAGES}
@@ -21,6 +22,7 @@ DIST = \
 	pakku.conf \
 	completion/bash.patch \
 	completion/make.sh \
+	completion/zsh.patch \
 	doc/asciidoc.conf \
 	${MAN_PAGES:=.txt} \
 	lib/*.nim \
@@ -36,7 +38,8 @@ PREFIX = /usr/local
 
 BINDIR = ${PREFIX}/bin
 PKGLIBDIR = ${PREFIX}/lib/pakku
-COMPLETIONSDIR = ${PREFIX}/share/bash-completion/completions
+BASHCOMPLETIONSDIR = ${PREFIX}/share/bash-completion/completions
+ZSHCOMPLETIONSDIR = ${PREFIX}/share/zsh/site-functions
 MANDIR = ${PREFIX}/share/man
 LOCALSTATEDIR = /var
 SYSCONFDIR = /etc
@@ -79,7 +82,11 @@ all: \
 
 completion/bash: completion/make.sh completion/bash.patch
 	@echo "GEN: $@"
-	@(cd completion && ./make.sh)
+	@(cd completion && ./make.sh 'bash')
+
+completion/zsh: completion/make.sh completion/zsh.patch
+	@echo "GEN: $@"
+	@(cd completion && ./make.sh 'zsh')
 
 ${MAN_PAGES:=.in}: ${MAN_PAGES:=.txt}
 	@echo "GEN: $@"
@@ -127,7 +134,8 @@ define uninstall
 endef
 
 install:
-	$(call install,644,'completion/bash','${COMPLETIONSDIR}/pakku')
+	$(call install,644,'completion/bash','${BASHCOMPLETIONSDIR}/pakku')
+	$(call install,644,'completion/zsh','${ZSHCOMPLETIONSDIR}/_pakku')
 	$(call install,644,'doc/pakku.8','${MANDIR}/man8/pakku.8')
 	$(call install,644,'doc/pakku.conf.5','${MANDIR}/man5/pakku.conf.5')
 	$(call install,755,'lib/bisect','${PKGLIBDIR}/bisect')
@@ -135,7 +143,8 @@ install:
 	$(call install,644,'pakku.conf','${SYSCONFDIR}/pakku.conf')
 
 uninstall:
-	$(call uninstall,'${COMPLETIONSDIR}','pakku')
+	$(call uninstall,'${BASHCOMPLETIONSDIR}','pakku')
+	$(call uninstall,'${ZSHCOMPLETIONSDIR}','_pakku')
 	$(call uninstall,'${MANDIR}/man8','pakku.8')
 	$(call uninstall,'${MANDIR}/man5','pakku.conf.5')
 	$(call uninstall,'${PKGLIBDIR}','bisect')
