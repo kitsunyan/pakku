@@ -95,7 +95,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
       execResult(collectedArgs)
     else:
       let isNonDefaultRoot = not config.isRootDefault
-      let isSkipDeps = args.check(%%%"nodeps")
+      let isSkipDeps = args.check(%%%"nodeps") or args.check(%%%"assume-installed")
       let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
       let build = args.check(%%%"build")

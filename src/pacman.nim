@@ -176,11 +176,10 @@ const
 
   syncConflictingOptions*: seq[ConflictingOptions] = @[
     ("asdeps", @["asexplicit"]),
-    ("build", @["nodeps", "assume-installed", "dbonly", "clean",
-      "groups", "info", "list", "search", "sysupgrade", "downloadonly"]),
+    ("build", @["clean", "groups", "info", "list", "search", "sysupgrade", "downloadonly"]),
     ("keyserver", @["clean", "groups", "info", "list", "search"]),
-    ("source", @["clean", "groups", "info", "list", "search", "sysupgrade",
-      "downloadonly", "build", "keyserver", "noaur"])
+    ("source", @["clean", "groups", "info", "list", "search", "sysupgrade", "downloadonly",
+      "build", "keyserver", "noaur"])
   ]
 
   allConflictingOptions = syncConflictingOptions
