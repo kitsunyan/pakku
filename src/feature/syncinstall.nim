@@ -1091,24 +1091,21 @@ proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget],
     let installed = lc[($p.name, $p.version, p.groupsSeq, p.reason == AlpmReason.explicit) |
       (p <- handle.local.packages), Installed]
 
-    let foreignUpgrade = if upgradeCount > 0: (block:
-        proc checkForeignAndIrreplaceable(name: string): bool =
-          if dbs.filter(d => d[name] != nil).len > 0:
-            return false
-          else:
-            for db in dbs:
-              for pkg in db.packages:
-                for replaces in pkg.replaces:
-                  if replaces.name == name:
-                    return false
-            return true
-
-        installed
-          .map(i => i.name)
-          .filter(checkForeignAndIrreplaceable)
-          .toSet)
+    proc checkForeignAndIrreplaceable(name: string): bool =
+      if dbs.filter(d => d[name] != nil).len > 0:
+        return false
       else:
-        initSet[string]()
+        for db in dbs:
+          for pkg in db.packages:
+            for replaces in pkg.replaces:
+              if replaces.name == name:
+                return false
+        return true
+
+    let foreignUpgrade = installed
+      .map(i => i.name)
+      .filter(checkForeignAndIrreplaceable)
+      .toSet
 
     let checkAurNamesFull = if noaur:
       @[]
