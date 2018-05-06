@@ -110,6 +110,7 @@ ${MAN_PAGES}: ${MAN_PAGES:=.in}
 	@echo "GEN: $@"
 	@sed \
 	-e 's,{sysconfdir},${SYSCONFDIR},' \
+	-e '/^[\.'"'"']\\"/d' \
 	< "${@:=.in}" > "$@"
 
 lib/bisect: lib/bisect.nim
