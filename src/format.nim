@@ -138,7 +138,7 @@ proc printPackageSearch*(color: bool, repo: string, name: string,
         "[" & trp"installed" & "]" & ^Color.normal
     elif installedVersion.isSome:
       " " & ^Color.cyan &
-        "[" & trp"installed" & " " & installedVersion.unsafeGet &
+        "[" & trp"installed" & ": " & installedVersion.unsafeGet &
         "]" & ^Color.normal
     else:
       ""
