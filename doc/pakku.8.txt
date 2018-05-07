@@ -36,8 +36,7 @@ Sync Options (apply to '-S')[[SO]]
 
 *\--noaur*::
 	Disable AUR support. This option is assumed when you use non-standard
-	root path, skip dependency checking using '-d', or run the program
-	from root.
+	root path or run the program from root.
 
 *-z, \--source*::
 	Retrieve PKGBUILD source. You can specify destination directory after

@@ -95,20 +95,16 @@ proc handleSync(args: seq[Argument], config: Config): int =
       execResult(collectedArgs)
     else:
       let isNonDefaultRoot = not config.isRootDefault
-      let isSkipDeps = args.check(%%%"nodeps") or args.check(%%%"assume-installed")
       let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
       let build = args.check(%%%"build")
       let noaur = args.check(%%%"noaur")
 
-      let noBuild = isNonDefaultRoot or isSkipDeps or isRootNoDrop
+      let noBuild = isNonDefaultRoot or isRootNoDrop
 
       if not printMode and build and noBuild:
         if isNonDefaultRoot:
           printError(config.color, tr"non-default root path is specified" & " -- " &
-            tr"building is not allowed")
-        elif isSkipDeps:
-          printError(config.color, tr"dependency check is skipped" & " -- " &
             tr"building is not allowed")
         elif isRootNoDrop:
           printError(config.color, tr"running as root" & " -- " &
@@ -120,9 +116,6 @@ proc handleSync(args: seq[Argument], config: Config): int =
         if noaurAdd:
           if isNonDefaultRoot:
             printWarning(config.color, tr"non-default root path is specified" & " -- " &
-              tr"'$#' is assumed" % ["--noaur"])
-          elif isSkipDeps:
-            printWarning(config.color, tr"dependency check is skipped" & " -- " &
               tr"'$#' is assumed" % ["--noaur"])
           elif isRootNoDrop:
             printWarning(config.color, tr"running as root" & " -- " &

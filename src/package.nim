@@ -173,9 +173,9 @@ proc checkConstraints(lop: ConstraintOperation, rop: ConstraintOperation, cmp: i
 
   a(2) or a(1) or a(0) or a(-1) or a(-2)
 
-proc isProvidedBy*(package: PackageReference, by: PackageReference): bool =
+proc isProvidedBy*(package: PackageReference, by: PackageReference, checkVersions: bool): bool =
   if package.name == by.name:
-    if package.constraint.isNone or by.constraint.isNone:
+    if not checkVersions or package.constraint.isNone or by.constraint.isNone:
       true
     else:
       let lcon = package.constraint.unsafeGet
@@ -273,7 +273,7 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
 
   proc filterReferences(references: seq[PackageReference],
     filterWith: seq[PackageReference]): seq[PackageReference] =
-    references.filter(r => filterWith.filter(w => r.isProvidedBy(w)).len == 0)
+    references.filter(r => filterWith.filter(w => r.isProvidedBy(w, true)).len == 0)
 
   let base = lc[x.value | (x <- baseSeq[], x.key == "pkgbase"), string].optLast
 

@@ -93,8 +93,8 @@ proc orderInstallation(pkgInfos: seq[PackageInfo],
 proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference],
   totalAurFail: seq[PackageReference], additionalPkgInfos: seq[PackageInfo], paths: seq[string],
-  printMode: bool, noaur: bool): (Table[PackageReference, SatisfyResult],
-  seq[PackageReference], seq[string]) =
+  nodepsCount: int, assumeInstalled: seq[PackageReference], printMode: bool, noaur: bool):
+  (Table[PackageReference, SatisfyResult], seq[PackageReference], seq[string]) =
   proc checkDependencyCycle(pkgInfo: PackageInfo, reference: PackageReference): bool =
     for checkReference in pkgInfo.allDepends:
       if checkReference == reference:
@@ -109,20 +109,21 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     for satref, res in satisfied.pairs:
       if res.buildPkgInfo.isSome:
         let pkgInfo = res.buildPkgInfo.unsafeGet
-        if satref == reference or reference.isProvidedBy(pkgInfo.toPackageReference):
+        if satref == reference or reference
+          .isProvidedBy(pkgInfo.toPackageReference, nodepsCount == 0):
           return some(pkgInfo)
         for provides in pkgInfo.provides:
-          if reference.isProvidedBy(provides) and
+          if reference.isProvidedBy(provides, nodepsCount == 0) and
             checkDependencyCycle(pkgInfo, reference):
             return some(pkgInfo)
     return none(PackageInfo)
 
   proc findInAdditional(reference: PackageReference): Option[PackageInfo] =
     for pkgInfo in additionalPkgInfos:
-      if reference.isProvidedBy(pkgInfo.toPackageReference):
+      if reference.isProvidedBy(pkgInfo.toPackageReference, nodepsCount == 0):
         return some(pkgInfo)
       for provides in pkgInfo.provides:
-        if reference.isProvidedBy(provides) and
+        if reference.isProvidedBy(provides, nodepsCount == 0) and
           checkDependencyCycle(pkgInfo, reference):
           return some(pkgInfo)
     return none(PackageInfo)
@@ -130,10 +131,10 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
   proc findInDatabaseWithGroups(db: ptr AlpmDatabase, reference: PackageReference,
     directName: bool): Option[tuple[name: string, groups: seq[string]]] =
     for pkg in db.packages:
-      if reference.isProvidedBy(pkg.toPackageReference):
+      if reference.isProvidedBy(pkg.toPackageReference, nodepsCount == 0):
         return some(($pkg.name, pkg.groupsSeq))
       for provides in pkg.provides:
-        if reference.isProvidedBy(provides.toPackageReference):
+        if reference.isProvidedBy(provides.toPackageReference, nodepsCount == 0):
           if directName:
             return some(($pkg.name, pkg.groupsSeq))
           else:
@@ -165,19 +166,23 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     if localName.isSome:
       some((true, localName.unsafeGet, none(PackageInfo)))
     else:
-      let pkgInfo = findInSatisfied(reference)
-      if pkgInfo.isSome:
-        some((false, pkgInfo.unsafeGet.name, pkgInfo))
+      if nodepsCount >= 2 or
+        assumeInstalled.filter(r => reference.isProvidedBy(r, true)).len > 0:
+        some((true, reference.name, none(PackageInfo)))
       else:
-        let pkgInfo = findInAdditional(reference)
+        let pkgInfo = findInSatisfied(reference)
         if pkgInfo.isSome:
           some((false, pkgInfo.unsafeGet.name, pkgInfo))
         else:
-          let syncName = findInDatabases(reference, false, true)
-          if syncName.isSome:
-            some((false, syncName.unsafeGet, none(PackageInfo)))
+          let pkgInfo = findInAdditional(reference)
+          if pkgInfo.isSome:
+            some((false, pkgInfo.unsafeGet.name, pkgInfo))
           else:
-            none(SatisfyResult)
+            let syncName = findInDatabases(reference, false, true)
+            if syncName.isSome:
+              some((false, syncName.unsafeGet, none(PackageInfo)))
+            else:
+              none(SatisfyResult)
 
   type ReferenceResult = tuple[reference: PackageReference, result: Option[SatisfyResult]]
 
@@ -232,20 +237,21 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
 
   if newUnsatisfied.len > 0:
     findDependencies(config, handle, dbs, newSatisfied, newTotalUnsatisfied, newTotalAurFail,
-      additionalPkgInfos & newAdditionalPkgInfos, paths & newPaths, printMode, noaur)
+      additionalPkgInfos & newAdditionalPkgInfos, paths & newPaths,
+      nodepsCount, assumeInstalled, printMode, noaur)
   else:
     let finallyUnsatisfied = newTotalAurFail.filter(r => not newSatisfied.hasKey(r))
     (newSatisfied, finallyUnsatisfied, paths & newPaths)
 
 proc findDependencies(config: Config, handle: ptr AlpmHandle,
-  dbs: seq[ptr AlpmDatabase], pkgInfos: seq[PackageInfo],
-  additionalPkgInfos: seq[PackageInfo], printMode: bool, noaur: bool):
+  dbs: seq[ptr AlpmDatabase], pkgInfos: seq[PackageInfo], additionalPkgInfos: seq[PackageInfo],
+  nodepsCount: int, assumeInstalled: seq[PackageReference], printMode: bool, noaur: bool):
   (Table[PackageReference, SatisfyResult], seq[PackageReference], seq[string]) =
   let satisfied = pkgInfos.map(p => ((p.name, none(string), none(VersionConstraint)),
     (false, p.name, some(p)))).toTable
   let unsatisfied = lc[x | (i <- pkgInfos, x <- i.allDepends), PackageReference].deduplicate
   findDependencies(config, handle, dbs, satisfied, unsatisfied, @[],
-    additionalPkgInfos, @[], printMode, noaur)
+    additionalPkgInfos, @[], nodepsCount, assumeInstalled, printMode, noaur)
 
 template clearPaths(paths: untyped) =
   for path in paths:
@@ -320,8 +326,8 @@ proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[
 
   editFileLoopAll(0)
 
-proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
-  noextract: bool): (Option[BuildResult], int, bool) =
+proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
+  noconfirm: bool, noextract: bool): (Option[BuildResult], int, bool) =
   let base = pkgInfos[0].base
   let repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].gitSubdir
@@ -377,7 +383,8 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
 
           let optional: seq[tuple[arg: string, cond: bool]] = @[
             ("-e", noextract),
-            ("-m", not config.color)
+            ("-m", not config.color),
+            ("-d", skipDeps)
           ]
 
           execResult(@[makepkgCmd, "--config", workConfFile, "-f"] &
@@ -424,7 +431,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], noconfirm: bool,
         (some(($confExt, targetPkgInfos & additionalPkgInfos)), 0, false)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
-  pkgInfos: seq[PackageInfo], noconfirm: bool): (Option[BuildResult], int) =
+  pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool): (Option[BuildResult], int) =
   let base = pkgInfos[0].base
   let repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].gitSubdir
@@ -439,7 +446,7 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       (none(BuildResult), 1)
     else:
       let (buildResult, code, interrupted) = buildLoop(config, pkgInfos,
-        noconfirm, noextract)
+        skipDeps, noconfirm, noextract)
 
       if interrupted:
         (buildResult, 1)
@@ -487,11 +494,11 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
 
 proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   basePackages: seq[seq[PackageInfo]], explicits: HashSet[string],
-  noconfirm: bool): (seq[(string, string)], int) =
+  skipDeps: bool, noconfirm: bool): (seq[(string, string)], int) =
   proc buildNext(index: int, buildResults: List[BuildResult]): (List[BuildResult], int) =
     if index < basePackages.len:
       let (buildResult, code) = buildFromSources(config, commonArgs,
-        basePackages[index], noconfirm)
+        basePackages[index], skipDeps, noconfirm)
 
       if code != 0:
         (buildResults.reversed, code)
@@ -565,7 +572,8 @@ proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo],
 
 proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
   additionalPkgInfos: seq[PackageInfo], printMode: bool, directSome: bool,
-  noaur: bool): (bool, Table[PackageReference, SatisfyResult],
+  nodepsCount: int, assumeInstalled: seq[PackageReference], noaur: bool):
+  (bool, Table[PackageReference, SatisfyResult],
   seq[string], seq[seq[seq[PackageInfo]]], seq[string]) =
   if pkgInfos.len > 0 and not printMode:
     if directSome:
@@ -574,7 +582,7 @@ proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
   let (satisfied, unsatisfied, paths) = withAlpm(config.root, config.db,
     config.dbs, config.arch, handle, dbs, errors):
     findDependencies(config, handle, dbs, pkgInfos, additionalPkgInfos,
-      printMode, noaur)
+      nodepsCount, assumeInstalled, printMode, noaur)
 
   if unsatisfied.len > 0:
     clearPaths(paths)
@@ -721,7 +729,14 @@ proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
   else:
     0
 
-proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
+proc assumeInstalled(args: seq[Argument]): seq[PackageReference] =
+  args
+    .filter(a => a.matchOption(%%%"assume-installed"))
+    .map(a => a.value.get.parsePackageReference(false))
+    .filter(r => r.constraint.isNone or
+      r.constraint.unsafeGet.operation == ConstraintOperation.eq)
+
+proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodepsCount: int,
   noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
   pacmanTargets: seq[FullPackageTarget[PackageInfo]], pkgInfos: seq[PackageInfo],
   additionalPkgInfos: seq[PackageInfo], keepNames: HashSet[string],
@@ -742,8 +757,12 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
       .keepOnlyOptions(commonOptions, transactionOptions, upgradeOptions)
       .filter(true, false, %%%"asdeps", %%%"asexplicit", %%%"needed")
 
+    let assumeInstalled = args.assumeInstalled
+    let skipDeps = assumeInstalled.len > 0 or nodepsCount > 0
+
     let (resolveSuccess, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
-      resolveDependencies(config, pkgInfos, additionalPkgInfos, false, directSome, noaur)
+      resolveDependencies(config, pkgInfos, additionalPkgInfos, false, directSome,
+        nodepsCount, assumeInstalled, noaur)
     let paths = initialPaths & dependencyPaths
 
     let confirmAndResolveCode = if resolveSuccess:
@@ -776,21 +795,24 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
       else:
         if basePackages.len > 0:
           # check all pacman dependencies were installed
-          let unsatisfied = withAlpm(config.root, config.db,
-            config.dbs, config.arch, handle, dbs, errors):
-            for e in errors: printError(config.color, e)
+          let unsatisfied = if nodepsCount <= 1:
+              withAlpm(config.root, config.db,
+                config.dbs, config.arch, handle, dbs, errors):
+                for e in errors: printError(config.color, e)
 
-            proc checkSatisfied(reference: PackageReference): bool =
-              for pkg in handle.local.packages:
-                if reference.isProvidedBy(pkg.toPackageReference):
-                  return true
-                for provides in pkg.provides:
-                  if reference.isProvidedBy(provides.toPackageReference):
-                    return true
-              return false
+                proc checkSatisfied(reference: PackageReference): bool =
+                  for pkg in handle.local.packages:
+                    if reference.isProvidedBy(pkg.toPackageReference, nodepsCount == 0):
+                      return true
+                    for provides in pkg.provides:
+                      if reference.isProvidedBy(provides.toPackageReference, nodepsCount == 0):
+                        return true
+                  return false
 
-            lc[x.key | (x <- satisfied.namedPairs, not x.value.installed and
-              x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
+                lc[x.key | (x <- satisfied.namedPairs, not x.value.installed and
+                  x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
+            else:
+              @[]
 
           if unsatisfied.len > 0:
             clearPaths(paths)
@@ -801,7 +823,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
               lastCode: int): (Table[string, string], int, int) =
               if index < basePackages.len and lastCode == 0:
                 let (addInstalledAs, code) = installGroupFromSources(config, commonArgs,
-                  basePackages[index], explicits, noconfirm)
+                  basePackages[index], explicits, skipDeps, noconfirm)
                 installNext(index + 1, addInstalledAs ^& installedAs, code)
               else:
                 (toSeq(installedAs.items).toTable, lastCode, index - 1)
@@ -832,13 +854,14 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int,
         else:
           0
 
-proc handlePrint(args: seq[Argument], config: Config, printFormat: string, upgradeCount: int,
-  pacmanTargets: seq[FullPackageTarget], pkgInfos: seq[PackageInfo],
-  additionalPkgInfos: seq[PackageInfo], noaur: bool): int =
+proc handlePrint(args: seq[Argument], config: Config, printFormat: string,
+  upgradeCount: int, nodepsCount: int, pacmanTargets: seq[FullPackageTarget],
+  pkgInfos: seq[PackageInfo], additionalPkgInfos: seq[PackageInfo], noaur: bool): int =
   let directPacmanTargets = pacmanTargets.map(`$`)
 
   let (resolveSuccess, _, additionalPacmanTargets, basePackages, _) =
-    resolveDependencies(config, pkgInfos, additionalPkgInfos, true, false, noaur)
+    resolveDependencies(config, pkgInfos, additionalPkgInfos, true, false,
+      nodepsCount, args.assumeInstalled, noaur)
 
   let code = if directPacmanTargets.len > 0 or
     additionalPacmanTargets.len > 0 or upgradeCount > 0: (block:
@@ -956,8 +979,8 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
 
   let nonConflicingPkgInfos = acceptedPkgInfos.foldl(block:
     let conflictsWith = lc[p | (p <- a, p.name != b.name and
-      (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.toPackageReference)), int].len > 0 or
-        lc[0 | (c <- p.conflicts, c.isProvidedBy(b.toPackageReference)), int].len > 0)),
+      (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.toPackageReference, true)), int].len > 0 or
+        lc[0 | (c <- p.conflicts, c.isProvidedBy(b.toPackageReference, true)), int].len > 0)),
       PackageInfo]
     if not printMode and conflictsWith.len > 0:
       for conflict in conflictsWith:
@@ -1002,7 +1025,7 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
 
   let installedUpgradeRpcInfos = rpcInfos.filter(i => upgradeCount > 0 and (block:
     let reference = i.toPackageReference
-    rpcAurTargets.filter(t => t.reference.isProvidedBy(reference)).len == 0))
+    rpcAurTargets.filter(t => t.reference.isProvidedBy(reference, true)).len == 0))
 
   let upgradeStructs: seq[tuple[rpcInfo: RpcPackageInfo, needed: bool,
     localIsNewer: Option[LocalIsNewer]]] = installedUpgradeRpcInfos
@@ -1166,8 +1189,9 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
       printSyncNotFound(config, notFoundTargets)
       errorResult
     else:
-      let fullTargets = mapAurTargets(syncTargets.filter(t => not (upToDateNeededTable
-        .opt(t.reference.name).map(r => t.reference.isProvidedBy(r)).get(false))), aurPkgInfos)
+      let fullTargets = mapAurTargets(syncTargets
+        .filter(t => not (upToDateNeededTable.opt(t.reference.name)
+        .map(r => t.reference.isProvidedBy(r, true)).get(false))), aurPkgInfos)
       let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
       let aurTargets = fullTargets.filter(isAurTargetFull)
 
@@ -1200,6 +1224,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
 
   let upgradeCount = args.count(%%%"sysupgrade")
+  let nodepsCount = args.count(%%%"nodeps")
   let needed = args.check(%%%"needed")
   let noaur = args.check(%%%"noaur")
   let build = args.check(%%%"build")
@@ -1228,7 +1253,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
     if code != 0:
       code
     elif printFormat.isSome:
-      handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount,
+      handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount, nodepsCount,
         pacmanTargets, pkgInfos, additionalPkgInfos, noaur)
     else:
       let foreignInstalled = installed.filter(i => i.name in foreignUpgrade)
@@ -1245,6 +1270,6 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
         else:
           foreignExplicitsNamesSet + (targetNamesSet - foreignDepsNamesSet)
 
-      handleInstall(pacmanArgs, config, upgradeCount, noconfirm,
+      handleInstall(pacmanArgs, config, upgradeCount, nodepsCount, noconfirm,
         explicits, installed, pacmanTargets, pkgInfos, additionalPkgInfos, keepNames,
         paths, build, noaur)

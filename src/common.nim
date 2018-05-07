@@ -78,9 +78,9 @@ proc filterNotFoundSyncTargetsInternal(syncTargets: seq[SyncPackageTarget],
   upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
   # collect packages which were found neither in sync DB nor in AUR
   syncTargets.filter(t => not (upToDateNeededTable.opt(t.reference.name)
-    .map(r => t.reference.isProvidedBy(r)).get(false)) and t.foundInfos.len == 0 and
+    .map(r => t.reference.isProvidedBy(r, true)).get(false)) and t.foundInfos.len == 0 and
     not (t.isAurTargetSync and pkgInfoReferencesTable.opt(t.reference.name)
-    .map(r => t.reference.isProvidedBy(r)).get(false)))
+    .map(r => t.reference.isProvidedBy(r, true)).get(false)))
 
 proc filterNotFoundSyncTargets*[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
   pkgInfos: seq[T], upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
@@ -104,7 +104,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   proc checkProvided(reference: PackageReference, db: ptr AlpmDatabase): bool =
     for pkg in db.packages:
       for provides in pkg.provides:
-        if reference.isProvidedBy(provides.toPackageReference):
+        if reference.isProvidedBy(provides.toPackageReference, true):
           return true
     return false
 
@@ -116,7 +116,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
         let db = dbTable[repo]
         let pkg = db[target.reference.name]
 
-        if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference):
+        if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, true):
           let base = if pkg.base == nil: target.reference.name else: $pkg.base
           return @[(repo, some((base, $pkg.version, some($pkg.arch))))]
         elif checkProvides and target.reference.checkProvided(db):
@@ -135,7 +135,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
       let directResults = dbs
         .map(db => (block:
           let pkg = db[target.reference.name]
-          if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference):
+          if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, true):
             let base = if pkg.base == nil: target.reference.name else: $pkg.base
             some(($db.name, some((base, $pkg.version, some($pkg.arch)))))
           else:
@@ -165,7 +165,7 @@ proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
   targets.map(proc (target: SyncPackageTarget): FullPackageTarget[T] =
     let res = if target.foundInfos.len == 0 and aurTable.hasKey(target.reference.name): (block:
         let pkgInfo = aurTable[target.reference.name]
-        if target.reference.isProvidedBy(pkgInfo.toPackageReference):
+        if target.reference.isProvidedBy(pkgInfo.toPackageReference, true):
           some((("aur", some((pkgInfo.base, pkgInfo.version, none(string)))), pkgInfo))
         else:
           none((SyncFoundInfo, T)))
@@ -223,7 +223,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       x <- y.value, withOptional or not x.optional), PackageReference]
 
     let indirect = lc[x.name | (y <- direct, x <- providedBy,
-      y.isProvidedBy(x.reference)), string].toSet
+      y.isProvidedBy(x.reference, true)), string].toSet
 
     let checkNext = (direct.map(p => p.name).toSet + indirect) - full
     if checkNext.len > 0: findRequired(withOptional, full, checkNext) else: full
