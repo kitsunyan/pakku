@@ -9,7 +9,9 @@ type
     name: string,
     version: string,
     groups: seq[string],
-    explicit: bool
+    explicit: bool,
+    foreign: bool,
+    foreignUpgrade: bool
   ]
 
   SatisfyResult = tuple[
@@ -902,18 +904,16 @@ proc handlePrint(args: seq[Argument], config: Config, printFormat: string,
   else:
     code
 
-proc printAllWarnings(config: Config, installed: seq[Installed],
-  installedTable: Table[string, Installed], rpcInfos: seq[RpcPackageInfo],
-  pkgInfos: seq[PackageInfo], acceptedPkgInfos: seq[PackageInfo],
-  upToDateNeeded: seq[Installed], buildUpToDateNeeded: seq[(string, string)],
-  foreignUpgrade: HashSet[string], localIsNewerSeq: seq[LocalIsNewer],
+proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[RpcPackageInfo],
+  pkgInfos: seq[PackageInfo], acceptedPkgInfos: seq[PackageInfo], upToDateNeeded: seq[Installed],
+  buildUpToDateNeeded: seq[(string, string)], localIsNewerSeq: seq[LocalIsNewer],
   targetNamesSet: HashSet[string], upgradeCount: int, noaur: bool) =
   let acceptedSet = acceptedPkgInfos.map(i => i.name).toSet
 
   if upgradeCount > 0 and not noaur and config.printAurNotFound:
     let rpcInfoTable = rpcInfos.map(i => (i.name, i)).toTable
     for inst in installed:
-      if inst.name in foreignUpgrade and not config.ignored(inst.name, inst.groups) and
+      if inst.foreignUpgrade and not config.ignored(inst.name, inst.groups) and
         not rpcInfoTable.hasKey(inst.name):
         printWarning(config.color, tr"$# was not found in AUR" % [inst.name])
 
@@ -932,6 +932,8 @@ proc printAllWarnings(config: Config, installed: seq[Installed],
       [name, version])
 
   for pkgInfo in pkgInfos:
+    let installedTable = installed.map(i => (i.name, i)).toTable
+
     if not (pkgInfo.name in acceptedSet):
       if not (pkgInfo.name in targetNamesSet) and upgradeCount > 0 and
         installedTable.hasKey(pkgInfo.name):
@@ -1104,9 +1106,8 @@ proc obtainPacmanBuildTargets(config: Config, pacmanTargets: seq[FullPackageTarg
 
   (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths, obtainErrorMessages)
 
-proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget],
-  upgradeCount: int, noaur: bool, build: bool): (seq[SyncPackageTarget], seq[string],
-  seq[Installed], HashSet[string]) =
+proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget], upgradeCount: int,
+  noaur: bool, build: bool): (seq[SyncPackageTarget], seq[string], seq[Installed]) =
   withAlpm(config.root, config.db,
     config.dbs, config.arch, handle, dbs, errors):
     for e in errors: printError(config.color, e)
@@ -1114,46 +1115,49 @@ proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget],
     let (syncTargets, checkAurNames) = findSyncTargets(handle, dbs, targets,
       not build, not build)
 
-    let installed = lc[($p.name, $p.version, p.groupsSeq, p.reason == AlpmReason.explicit) |
-      (p <- handle.local.packages), Installed]
+    proc checkReplaceable(name: string): bool =
+      for db in dbs:
+        for pkg in db.packages:
+          for replaces in pkg.replaces:
+            if replaces.name == name:
+              return true
+      return false
 
-    proc checkForeignAndIrreplaceable(name: string): bool =
-      if dbs.filter(d => d[name] != nil).len > 0:
-        return false
-      else:
-        for db in dbs:
-          for pkg in db.packages:
-            for replaces in pkg.replaces:
-              if replaces.name == name:
-                return false
-        return true
+    proc createInstalled(package: ptr AlpmPackage): Installed =
+      let foreign = dbs.filter(d => d[package.name] != nil).len == 0
+      let foreignUpgrade = foreign and (upgradeCount == 0 or not checkReplaceable($package.name))
 
-    let foreignUpgrade = installed
-      .map(i => i.name)
-      .filter(checkForeignAndIrreplaceable)
-      .toSet
+      ($package.name, $package.version, package.groupsSeq,
+        package.reason == AlpmReason.explicit, foreign, foreignUpgrade)
+
+    let installed = lc[createInstalled(p) | (p <- handle.local.packages), Installed]
 
     let checkAurNamesFull = if noaur:
       @[]
-    elif upgradeCount > 0:
+    elif upgradeCount > 0: (block:
+      let foreignUpgrade = installed
+        .filter(i => i.foreignUpgrade)
+        .map(i => i.name)
+        .toSet
+
       installed
         .filter(i => i.name in foreignUpgrade and
           (config.checkIgnored or not config.ignored(i.name, i.groups)))
-        .map(i => i.name) & checkAurNames
+        .map(i => i.name) & checkAurNames)
     else:
       checkAurNames
 
-    (syncTargets, checkAurNamesFull, installed, foreignUpgrade)
+    (syncTargets, checkAurNamesFull, installed)
 
 proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
   printMode: bool, upgradeCount: int, noconfirm: bool, needed: bool, noaur: bool, build: bool):
-  (int, seq[Installed], HashSet[string], HashSet[string], seq[FullPackageTarget[PackageInfo]],
+  (int, seq[Installed], HashSet[string], seq[FullPackageTarget[PackageInfo]],
   seq[PackageInfo], seq[PackageInfo], seq[string]) =
-  template errorResult: untyped = (1, newSeq[Installed](), initSet[string](),
+  template errorResult: untyped = (1, newSeq[Installed](),
     initSet[string](), newSeq[FullPackageTarget[PackageInfo]](),
     newSeq[PackageInfo](), newSeq[PackageInfo](), newSeq[string]())
 
-  let (syncTargets, checkAurNames, installed, foreignUpgrade) =
+  let (syncTargets, checkAurNames, installed) =
     findSyncTargetsWithInstalled(config, targets, upgradeCount, noaur, build)
 
   if not printMode and (checkAurNames.len > 0 or build):
@@ -1213,11 +1217,11 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
           targetNamesSet, installedTable, printMode, noconfirm)
 
         if not printMode:
-          printAllWarnings(config, installed, installedTable, rpcInfos,
+          printAllWarnings(config, installed, rpcInfos,
             pkgInfos, acceptedPkgInfos, upToDateNeeded, buildUpToDateNeeded,
-            foreignUpgrade, localIsNewerSeq, targetNamesSet, upgradeCount, noaur)
+            localIsNewerSeq, targetNamesSet, upgradeCount, noaur)
 
-        (0, installed, foreignUpgrade, targetNamesSet, pacmanTargets,
+        (0, installed, targetNamesSet, pacmanTargets,
           finalPkgInfos, additionalPkgInfos, buildPaths & aurPaths)
 
 proc handleSyncInstall*(args: seq[Argument], config: Config): int =
@@ -1244,7 +1248,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let targets = args.packageTargets(false)
 
   withAur():
-    let (code, installed, foreignUpgrade, targetNamesSet, pacmanTargets,
+    let (code, installed, targetNamesSet, pacmanTargets,
       pkgInfos, additionalPkgInfos, paths) = resolveBuildTargets(config, targets,
       printFormat.isSome, upgradeCount, noconfirm, needed, noaur, build)
 
@@ -1256,7 +1260,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount, nodepsCount,
         pacmanTargets, pkgInfos, additionalPkgInfos, noaur)
     else:
-      let foreignInstalled = installed.filter(i => i.name in foreignUpgrade)
+      let foreignInstalled = installed.filter(i => i.foreign)
       let foreignExplicitsNamesSet = foreignInstalled
         .filter(i => i.explicit).map(i => i.name).toSet
       let foreignDepsNamesSet = foreignInstalled
