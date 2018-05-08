@@ -1,4 +1,4 @@
-VERSION = 0.10
+VERSION = 0.11
 COPYRIGHT = 2018 kitsunyan
 DIST_MODE = false
 
