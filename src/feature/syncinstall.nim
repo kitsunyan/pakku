@@ -711,9 +711,11 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
 proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
   unrequired: HashSet[string], unrequiredOptional: HashSet[string]): int =
   if unrequired.len > 0 or unrequiredOptional.len > 0: (block:
+    let removeArgs = commonArgs.keepOnlyOptions(commonOptions, transactionOptions)
+
     let code = if unrequired.len > 0: (block:
         printColon(config.color, tr"Removing build dependencies...")
-        pacmanRun(true, config.color, commonArgs &
+        pacmanRun(true, config.color, removeArgs &
           ("R", none(string), ArgumentType.short) &
           toSeq(unrequired.items).map(t =>
             (t, none(string), ArgumentType.target))))
@@ -722,7 +724,7 @@ proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
 
     if code == 0 and unrequiredOptional.len > 0:
       printColon(config.color, tr"Removing optional build dependencies...")
-      pacmanRun(true, config.color, commonArgs &
+      pacmanRun(true, config.color, removeArgs &
         ("R", none(string), ArgumentType.short) &
         toSeq(unrequiredOptional.items).map(t =>
           (t, none(string), ArgumentType.target)))
