@@ -1262,19 +1262,16 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount, nodepsCount,
         pacmanTargets, pkgInfos, additionalPkgInfos, noaur)
     else:
-      let foreignInstalled = installed.filter(i => i.foreign)
-      let foreignExplicitsNamesSet = foreignInstalled
-        .filter(i => i.explicit).map(i => i.name).toSet
-      let foreignDepsNamesSet = foreignInstalled
-        .filter(i => not i.explicit).map(i => i.name).toSet
-      let keepNames = foreignExplicitsNamesSet + foreignDepsNamesSet + targetNamesSet
+      let explicitsNamesSet = installed.filter(i => i.explicit).map(i => i.name).toSet
+      let depsNamesSet = installed.filter(i => not i.explicit).map(i => i.name).toSet
+      let keepNames = explicitsNamesSet + depsNamesSet + targetNamesSet
 
       let explicits = if args.check(%%%"asexplicit"):
-          targetNamesSet + foreignExplicitsNamesSet + foreignDepsNamesSet
+          targetNamesSet + explicitsNamesSet + depsNamesSet
         elif args.check(%%%"asdeps"):
           initSet[string]()
         else:
-          foreignExplicitsNamesSet + (targetNamesSet - foreignDepsNamesSet)
+          explicitsNamesSet + (targetNamesSet - depsNamesSet)
 
       handleInstall(pacmanArgs, config, upgradeCount, nodepsCount, noconfirm,
         explicits, installed, pacmanTargets, pkgInfos, additionalPkgInfos, keepNames,
