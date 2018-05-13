@@ -764,8 +764,22 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
     let assumeInstalled = args.assumeInstalled
     let skipDeps = assumeInstalled.len > 0 or nodepsCount > 0
 
+    let removedNames = withAlpm(config.root, config.db,
+      config.dbs, config.arch, handle, dbs, errors):
+      for e in errors: printError(config.color, e)
+      let newInstalledNames = lc[$p.name | (p <- handle.local.packages), string].toSet
+      installed.map(i => i.name).filter(n => not (n in newInstalledNames)).toSet
+
+    let (finalPkgInfos, finalAdditionalPkgInfos) = pkgInfos.foldl(block:
+      let (pkgInfos, additionalPkgInfos) = a
+      if b.name in removedNames:
+        (pkgInfos, additionalPkgInfos & b)
+      else:
+        (pkgInfos & b, additionalPkgInfos),
+      (newSeq[PackageInfo](), additionalPkgInfos))
+
     let (resolveSuccess, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
-      resolveDependencies(config, pkgInfos, additionalPkgInfos, false, directSome,
+      resolveDependencies(config, finalPkgInfos, finalAdditionalPkgInfos, false, directSome,
         nodepsCount, assumeInstalled, noaur)
     let paths = initialPaths & dependencyPaths
 
@@ -852,10 +866,10 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
               removeCode
             else:
               code
-        elif not directSome and not additionalSome:
-          echo(trp(" there is nothing to do\n"))
-          0
         else:
+          if not directSome and not additionalSome:
+            echo(trp(" there is nothing to do\n"))
+          clearPaths(paths)
           0
 
 proc handlePrint(args: seq[Argument], config: Config, printFormat: string,
