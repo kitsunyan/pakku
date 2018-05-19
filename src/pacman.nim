@@ -83,7 +83,8 @@ const
     ^o("hookdir"),
     ^o("logfile"),
     o("noconfirm"),
-    o("confirm")
+    o("confirm"),
+    ^o("ask")
   ]
 
   transactionOptions*: seq[CommandOption] = @[
