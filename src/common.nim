@@ -4,6 +4,9 @@ import
   "wrapper/alpm"
 
 type
+  CacheKind* {.pure.} = enum
+    repositories
+
   SyncFoundPackageInfo* = tuple[
     base: string,
     version: string,
@@ -245,20 +248,45 @@ proc `$`*[T: PackageTarget](target: T): string =
 template tmpRoot(config: Config, dropPrivileges: bool): string =
   if dropPrivileges: config.tmpRootInitial else: config.tmpRootCurrent
 
-proc ensureTmpOrError*(config: Config, dropPrivileges: bool): Option[string] =
-  let tmpRootExists = try:
-    discard config.tmpRoot(dropPrivileges).existsOrCreateDir()
-    if dropPrivileges:
-      let user = initialUser.get(currentUser)
-      discard chown(config.tmpRoot(dropPrivileges), (Uid) user.uid, (Gid) user.gid)
-    true
-  except:
-    false
+template userCache(config: Config, dropPrivileges: bool): string =
+  if dropPrivileges: config.userCacheInitial else: config.userCacheCurrent
 
-  if not tmpRootExists:
-    some(tr"failed to create tmp directory '$#'" % [config.tmpRoot(dropPrivileges)])
+template cache*(userCache: string, cacheKind: CacheKind): string =
+  userCache & "/" & $cacheKind
+
+proc createDirRecursive(dir: string, chownUser: Option[User]): bool =
+  let segments = dir.split("/").filter(x => not (x.len == 0 or x == "."))
+
+  proc createDirIndex(index: int): bool =
+    if index < segments.len:
+      let path = (if dir.len > 0 and dir[0] == '/': "/" else: "") &
+        segments[0 .. index].join("/")
+      try:
+        let exists = path.existsOrCreateDir()
+        if chownUser.isSome and (not exists or index == segments.len - 1):
+          discard chown(path, (Uid) chownUser.unsafeGet.uid, (Gid) chownUser.unsafeGet.gid)
+        createDirIndex(index + 1)
+      except:
+        false
+    else:
+      true
+
+  createDirIndex(0)
+
+proc ensureDirOrError(dir: string, dropPrivileges: bool): Option[string] =
+  let user = if dropPrivileges: some(initialUser.get(currentUser)) else: none(User)
+
+  if not createDirRecursive(dir, user):
+    some(tr"failed to create directory '$#'" % [dir])
   else:
     none(string)
+
+proc ensureTmpOrError*(config: Config, dropPrivileges: bool): Option[string] =
+  ensureDirOrError(config.tmpRoot(dropPrivileges), dropPrivileges)
+
+proc ensureUserCacheOrError*(config: Config, cacheKind: CacheKind,
+  dropPrivileges: bool): Option[string] =
+  ensureDirOrError(config.userCache(dropPrivileges).cache(cacheKind), dropPrivileges)
 
 proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
   dropPrivileges: bool): seq[string] =

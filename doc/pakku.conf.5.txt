@@ -16,6 +16,10 @@ divided into sections. Only options section is used.
 
 Options
 -------
+*UserCacheDir =* path/to/user/cache/dir::
+	Set the cache directory in which pakku will cache repositories.
+	The default value is +$\{HOME\}/.cache/pakku+.
+
 *TmpDir =* path/to/tmp/dir::
 	Set the temporary directory in which pakku will perform all
 	building operations. The default value is +/tmp/pakku-$\{USER\}+.

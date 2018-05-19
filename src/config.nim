@@ -29,6 +29,8 @@ type
     root*: string
     db*: string
     cache*: string
+    userCacheInitial*: string
+    userCacheCurrent*: string
     tmpRootInitial*: string
     tmpRootCurrent*: string
     color*: bool
@@ -119,12 +121,23 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let cache = config.cache
   let color = config.colorMode.get
 
-  proc obtainTmpDir(user: User): string =
-    options.opt("TmpDir").get("/tmp/pakku-${USER}")
+  proc handleDirPattern(dirPattern: string, user: User): string =
+    dirPattern
       .replace("${UID}", $user.uid)
       .replace("${USER}", user.name)
+      .replace("${HOME}", user.home)
+      .replace("$$", "$")
 
-  let tmpRootInitial = obtainTmpDir(initialUser.get(currentUser))
+  proc obtainUserCacheDir(user: User): string =
+    options.opt("UserCacheDir").get("${HOME}/.cache/pakku").handleDirPattern(user)
+
+  proc obtainTmpDir(user: User): string =
+    options.opt("TmpDir").get("/tmp/pakku-${USER}").handleDirPattern(user)
+
+  let initialOrCurrentUser = initialUser.get(currentUser)
+  let userCacheInitial = obtainUserCacheDir(initialOrCurrentUser)
+  let userCacheCurrent = obtainUserCacheDir(currentUser)
+  let tmpRootInitial = obtainTmpDir(initialOrCurrentUser)
   let tmpRootCurrent = obtainTmpDir(currentUser)
   let aurComments = options.hasKey("AurComments")
   let checkIgnored = options.hasKey("CheckIgnored")
@@ -134,6 +147,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let preBuildCommand = options.opt("PreBuildCommand")
 
   Config(root: root, db: db, cache: cache,
+    userCacheInitial: userCacheInitial, userCacheCurrent: userCacheCurrent,
     tmpRootInitial: tmpRootInitial, tmpRootCurrent: tmpRootCurrent, color: color,
     dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
