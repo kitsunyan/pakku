@@ -282,14 +282,17 @@ template dropPrivilegesAndChdir(path: Option[string], body: untyped): int =
     printError(config.color, tr"failed to drop privileges")
     quit(1)
 
-proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[string],
-  defaultYes: bool, noconfirm: bool): char =
-  proc editFileLoop(file: string): char =
-    let default = if defaultYes: 'y' else: 'n'
+template createViewTag(repo: string, base: string): string =
+  "view-" & repo & "/" & base
 
+proc editLoop(config: Config, repo: string, base: string, repoPath: string,
+  gitSubdir: Option[string], defaultYes: bool, noconfirm: bool): char =
+  let default = if defaultYes: 'y' else: 'n'
+
+  proc editFileLoop(file: string): char =
     let res = printColonUserChoiceWithHelp(config.color,
       tr"View and edit $#?" % [base & "/" & file],
-      choices('y', 'n', ('s', tr"skip all files"), ('a', tr"abort operation")),
+      choices('y', 'n', ('s', tr"skip all"), ('a', tr"abort operation")),
       default, noconfirm, 'n')
 
     if res == 'y':
@@ -324,7 +327,51 @@ proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[
     else:
       'n'
 
-  editFileLoopAll(0)
+  let tag = createViewTag(repo, base)
+
+  proc viewDiffLoop(hasChanges: bool): char =
+    let res = if hasChanges:
+        printColonUserChoiceWithHelp(config.color,
+          tr"View changes in $#?" % [base],
+          choices('y', 'n', ('e', tr"edit files"), ('s', tr"skip all"), ('a', tr"abort operation")),
+          default, noconfirm, 'n')
+      else:
+        printColonUserChoiceWithHelp(config.color,
+          tr"No changes in $#. Edit files?" % [base],
+          choices('y', 'n', ('s', tr"skip all"), ('a', tr"abort operation")),
+          'n', noconfirm, 'n')
+
+    if hasChanges and res == 'y':
+      discard forkWait(() => (block:
+        dropPrivilegesAndChdir(none(string)):
+          execResult(gitCmd, "-C", repoPath, "diff", tag & "..@", gitSubdir.get("."))))
+      viewDiffLoop(hasChanges)
+    elif (hasChanges and res == 'e') or (not hasChanges and res == 'y'):
+      editFileLoopAll(0)
+    else:
+      res
+
+  let (hasChanges, noTag) = if repo == "aur": (block:
+      let revisions = forkWaitRedirect(() => (block:
+        dropPrivilegesAndChdir(none(string)):
+          execResult(gitCmd, "-C", repoPath, "rev-list", tag & "..@")))
+
+      if revisions.code != 0:
+        (false, true)
+      elif revisions.output.len == 0:
+        (false, false)
+      else: (block:
+        let diff = forkWaitRedirect(() => (block:
+          dropPrivilegesAndChdir(none(string)):
+            execResult(gitCmd, "-C", repoPath, "diff", tag & "..@", gitSubdir.get("."))))
+        (diff.output.len > 0, false)))
+    else:
+      (false, true)
+
+  if noTag:
+    editFileLoopAll(0)
+  else:
+    viewDiffLoop(hasChanges)
 
 proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
   noconfirm: bool, noextract: bool): (Option[BuildResult], int, bool) =
@@ -438,7 +485,7 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
 
   proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
     let res = if showEditLoop and not noconfirm:
-        editLoop(config, base, repoPath, gitSubdir, false, noconfirm)
+        editLoop(config, pkgInfos[0].repo, base, repoPath, gitSubdir, false, noconfirm)
       else:
         'n'
 
@@ -546,6 +593,28 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         handleTmpRoot(false)
         (newSeq[(string, string)](), code)
       else:
+        let cachePath = config.userCacheInitial.cache(CacheKind.repositories)
+        for pkgInfos in basePackages:
+          let repo = pkgInfos[0].repo
+          if repo == "aur":
+            let base = pkgInfos[0].base
+            let fullName = bareFullName(BareKind.pkg, base)
+            let bareRepoPath = repoPath(cachePath, fullName)
+            let tag = createViewTag(repo, base)
+
+            template run(args: varargs[string]) =
+              discard forkWait(() => (block:
+                dropPrivilegesAndChdir(none(string)):
+                  if not config.debug:
+                    discard close(1)
+                    discard open("/dev/null")
+                    discard close(2)
+                    discard open("/dev/null")
+                  execResult(args)))
+
+            run(gitCmd, "-C", bareRepoPath, "tag", "-d", tag)
+            run(gitCmd, "-C", bareRepoPath, "tag", tag)
+
         handleTmpRoot(true)
         let installedAs = lc[(r.name.unsafeGet, r.pkgInfo.name) | (br <- buildResults,
           r <- br.replacePkgInfos, r.name.isSome), (string, string)]
@@ -611,10 +680,11 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
       proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
         if index < flatBasePackages.len:
           let pkgInfos = flatBasePackages[index]
+          let repo = pkgInfos[0].repo
           let base = pkgInfos[0].base
           let repoPath = repoPath(config.tmpRootInitial, base)
 
-          let aur = pkgInfos[0].repo == "aur"
+          let aur = repo == "aur"
 
           if not skipEdit and aur and not noconfirm and config.aurComments:
             echo(tr"downloading comments from AUR...")
@@ -628,7 +698,7 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
               'n'
             else: (block:
               let defaultYes = aur and not config.viewNoDefault
-              editLoop(config, base, repoPath, pkgInfos[0].gitSubdir, defaultYes, noconfirm))
+              editLoop(config, repo, base, repoPath, pkgInfos[0].gitSubdir, defaultYes, noconfirm))
 
           if editRes == 'a':
             1
