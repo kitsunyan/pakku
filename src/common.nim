@@ -8,7 +8,7 @@ type
     repositories
 
   BareKind* {.pure.} = enum
-    repo
+    pkg, repo
 
   SyncFoundPackageInfo* = tuple[
     base: string,
@@ -625,18 +625,41 @@ proc cloneAurRepo*(config: Config, base: string, gitUrl: string,
   dropPrivileges: bool): (int, Option[string]) =
   let repoPath = repoPath(config.tmpRoot(dropPrivileges), base)
 
-  let message = ensureTmpOrError(config, dropPrivileges)
+  let message = block:
+    let message = ensureUserCacheOrError(config, CacheKind.repositories, dropPrivileges)
+    if message.isNone:
+      ensureTmpOrError(config, dropPrivileges)
+    else:
+      message
+
   if message.isSome:
     (1, message)
   elif repoPath.existsDir():
     (0, none(string))
   else:
-    let cloneCode = forkWait(() => (block:
+    let fullName = bareFullName(BareKind.pkg, base)
+    let cachePath = config.userCache(dropPrivileges).cache(CacheKind.repositories)
+    let bareRepoPath = repoPath(cachePath, fullName)
+
+    let cloneBareCode = forkWait(() => (block:
       if not dropPrivileges or dropPrivileges():
-        execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
-          "clone", "-q", gitUrl, "--single-branch", base)
+        if existsDir(bareRepoPath):
+          execResult(gitCmd, "-C", bareRepoPath, "fetch", "-q", "--no-tags")
+        else:
+          execResult(gitCmd, "-C", cachePath, "clone", "-q", "--bare", "--no-tags",
+            gitUrl, "--single-branch", fullName)
       else:
         quit(1)))
+
+    let cloneCode = if cloneBareCode == 0:
+        forkWait(() => (block:
+          if not dropPrivileges or dropPrivileges():
+            execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
+              "clone", "-q", bareRepoPath, "--single-branch", base)
+          else:
+            quit(1)))
+      else:
+        cloneBareCode
 
     if cloneCode != 0:
       (cloneCode, some(tr"$#: failed to clone git repository" % [base]))
