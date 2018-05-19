@@ -286,15 +286,13 @@ proc editLoop(config: Config, base: string, repoPath: string, gitSubdir: Option[
   defaultYes: bool, noconfirm: bool): char =
   proc editFileLoop(file: string): char =
     let default = if defaultYes: 'y' else: 'n'
-    let res = printColonUserChoice(config.color,
-      tr"View and edit $#?" % [base & "/" & file], ['y', 'n', 's', 'a', '?'],
-      default, '?', noconfirm, 'n')
 
-    if res == '?':
-      printUserInputHelp(('s', tr"skip all files"),
-        ('a', tr"abort operation"))
-      editFileLoop(file)
-    elif res == 'y':
+    let res = printColonUserChoiceWithHelp(config.color,
+      tr"View and edit $#?" % [base & "/" & file],
+      choices('y', 'n', ('s', tr"skip all files"), ('a', tr"abort operation")),
+      default, noconfirm, 'n')
+
+    if res == 'y':
       let visualEnv = getEnv("VISUAL")
       let editorEnv = getEnv("EDITOR")
       let editor = if visualEnv.len > 0:
@@ -453,17 +451,9 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       if interrupted:
         (buildResult, 1)
       elif code != 0:
-        proc ask(): char =
-          let res = printColonUserChoice(config.color,
-            tr"Build failed, retry?", ['y', 'e', 'n', '?'], 'n', '?',
-            noconfirm, 'n')
-          if res == '?':
-            printUserInputHelp(('e', tr"retry with --noextract option"))
-            ask()
-          else:
-            res
+        let res = printColonUserChoiceWithHelp(config.color, tr"Build failed, retry?",
+          choices('y', ('e', tr"retry with --noextract option"), 'n'), 'n', noconfirm, 'n')
 
-        let res = ask()
         if res == 'e':
           loop(true, true)
         elif res == 'y':
@@ -664,17 +654,14 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
                 let res = if skipKeys:
                     'y'
                   else:
-                    printColonUserChoice(config.color,
-                      tr"Import PGP key $#?" % [pgpKeys[index]], ['y', 'n', 'c', 'a', '?'],
-                      'y', '?', noconfirm, 'y')
+                    printColonUserChoiceWithHelp(config.color,
+                      tr"Import PGP key $#?" % [pgpKeys[index]],
+                      choices('y', 'n', ('c', tr"import all keys"), ('a', tr"abort operation")),
+                      'y', noconfirm, 'y')
 
                 let newSkipKeys = skipKeys or res == 'c'
 
-                if res == '?':
-                  printUserInputHelp(('c', tr"import all keys"),
-                    ('a', tr"abort operation"))
-                  keysLoop(index, newSkipKeys)
-                elif res == 'y' or newSkipKeys:
+                if res == 'y' or newSkipKeys:
                   let importCode = forkWait(() => (block:
                     dropPrivilegesAndChdir(none(string)):
                       if config.pgpKeyserver.isSome:

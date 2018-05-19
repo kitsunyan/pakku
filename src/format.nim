@@ -1,5 +1,5 @@
 import
-  future, options, posix, sequtils, strutils, times, unicode,
+  future, macros, options, posix, sequtils, strutils, times, unicode,
   utils
 
 type
@@ -266,9 +266,33 @@ proc printColonUserChoice*(color: bool, s: string, answers: openArray[char],
   else:
     negative
 
-proc printUserInputHelp*(operations: varargs[tuple[answer: char, description: string]]) =
-  for operation in (@operations & ('?', tr"view this help")):
-    echo("   ", operation.answer, " - ", operation.description)
+proc printColonUserChoiceWithHelp*(color: bool, s: string,
+  answers: openArray[tuple[c: char, help: Option[string]]], positive: char,
+  noconfirm: bool, default: char): char =
+  let c = printColonUserChoice(color, s, answers.map(a => a.c) & '?',
+    positive, '?', noconfirm, default)
+
+  if c == '?':
+    for answer in @answers & ('?', some(tr"view this help")):
+      if answer.help.isSome:
+        echo("   ", answer.c, " - ", answer.help.unsafeGet)
+    printColonUserChoiceWithHelp(color, s, answers, positive, noconfirm, default)
+  else:
+    c
+
+macro choices*(choices: varargs[untyped]): untyped =
+  result = newNimNode(nnkBracket)
+  for choice in choices:
+    case choice.kind:
+      of nnkCharLit:
+        result.add(newPar(choice, newCall(ident("none"), ident("string"))))
+      of nnkPar:
+        if choice.len == 2:
+          result.add(newPar(choice[0], newCall(ident("some"), choice[1])))
+        else:
+          error("error")
+      else:
+        error("error")
 
 proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () -> void) =
   let width = getWindowSize().width
