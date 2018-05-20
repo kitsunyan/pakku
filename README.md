@@ -11,6 +11,7 @@ Say hello to stillborn AUR helper written in stillborn programming language!
 Basically, pakku supports the following features:
 
 - Installing packages from AUR
+- Viewing files and changes between builds
 - Building packages from official repositories
 - Removing make dependencies after building
 - Searching and querying AUR packages
