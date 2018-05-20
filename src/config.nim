@@ -1,5 +1,5 @@
 import
-  future, options, posix, re, sets, strutils, tables,
+  future, options, posix, re, sequtils, sets, strutils, tables,
   utils
 
 type
@@ -7,6 +7,11 @@ type
     colorNever = "never",
     colorAuto = "auto",
     colorAlways = "always"
+
+  PreserveBuilt* {.pure.} = enum
+    internal = "Internal",
+    user = "User",
+    disabled = "Disabled"
 
   CommonConfig* = object of RootObj
     dbs*: seq[string]
@@ -39,6 +44,7 @@ type
     printAurNotFound*: bool
     sudoExec*: bool
     viewNoDefault*: bool
+    preserveBuilt*: PreserveBuilt
     preBuildCommand*: Option[string]
 
 proc readConfigFile*(configFile: string):
@@ -144,6 +150,9 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let printAurNotFound = options.hasKey("PrintAurNotFound")
   let sudoExec = options.hasKey("SudoExec")
   let viewNoDefault = options.hasKey("ViewNoDefault")
+  let preserveBuilt = toSeq(enumerate[PreserveBuilt]())
+    .filter(o => some($o) == options.opt("PreserveBuilt"))
+    .optLast.get(PreserveBuilt.disabled)
   let preBuildCommand = options.opt("PreBuildCommand")
 
   Config(root: root, db: db, cache: cache,
@@ -153,4 +162,5 @@ proc obtainConfig*(config: PacmanConfig): Config =
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
     ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
     aurComments: aurComments, checkIgnored: checkIgnored, printAurNotFound: printAurNotFound,
-    sudoExec: sudoExec, viewNoDefault: viewNoDefault, preBuildCommand: preBuildCommand)
+    sudoExec: sudoExec, viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt,
+    preBuildCommand: preBuildCommand)

@@ -44,6 +44,11 @@ Options
 	content of PKGBUILD and other files. Pressing enter key will give the
 	positive answer unless this option is specified.
 
+*PreserveBuilt =* Internal | User | Disabled::
+	If set to Internal, built packages will be copied to pacman cache dir.
+	If set to User, built packages will be copied to UserCacheDir.
+	If set to Disabled (the default), built packages will not be preserved.
+
 *PreBuildCommand =* command::
 	This command will be executed in package directory before building,
 	allowing you to modify PKGBUILD or perform other necessary actions.

@@ -5,7 +5,7 @@ import
 
 type
   CacheKind* {.pure.} = enum
-    repositories
+    repositories, packages
 
   BareKind* {.pure.} = enum
     pkg, repo

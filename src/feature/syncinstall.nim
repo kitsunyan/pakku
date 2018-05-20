@@ -585,7 +585,20 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       let asdeps = install.filter(p => not (p.name in explicits)).map(p => p.file)
       let asexplicit = install.filter(p => p.name in explicits).map(p => p.file)
 
-      let installParams = sudoPrefix & (pkgLibDir & "/install") & config.cache &
+      let (cacheDir, cacheUser, cacheGroup) = if config.preserveBuilt == PreserveBuilt.internal:
+          (config.cache, 0, 0)
+        elif config.preserveBuilt == PreserveBuilt.user: (block:
+          let error = ensureUserCacheOrError(config, CacheKind.packages, true)
+          for e in error: printError(config.color, e)
+          let user = initialUser.get(currentUser)
+          let dir = config.userCacheInitial.cache(CacheKind.packages)
+          (dir, user.uid, user.gid))
+        else:
+          # pass -1 values to disable caching
+          ("", -1, -1)
+
+      let installParams = sudoPrefix & (pkgLibDir & "/install") &
+        cacheDir & $cacheUser & $cacheGroup &
         $pacmanParams.len & pacmanParams & $asdeps.len & asdeps & $asexplicit.len & asexplicit
 
       let code = forkWait(() => execResult(installParams))

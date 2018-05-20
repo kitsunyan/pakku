@@ -2,7 +2,9 @@ import future, os, posix, sequtils, strutils
 
 let params = commandLineParams()
 let destination = params[0]
-let paramsStart = 1
+let uid = params[1].parseInt
+let gid = params[2].parseInt
+let paramsStart = 3
 
 proc splitCommands(index: int, res: seq[seq[string]]): seq[seq[string]] =
   if index < params.len:
@@ -15,13 +17,16 @@ proc splitCommands(index: int, res: seq[seq[string]]): seq[seq[string]] =
 let commands = splitCommands(paramsStart, @[])
 let targets = lc[x | (y <- commands[1 .. ^1], x <- y), string]
 
-for file in targets:
-  try:
-    let index = file.rfind("/")
-    let name = if index >= 0: file[index + 1 .. ^1] else: file
-    copyFile(file, destination & "/" & name)
-  except:
-    discard
+if uid >= 0 and gid >= 0:
+  for file in targets:
+    try:
+      let index = file.rfind("/")
+      let name = if index >= 0: file[index + 1 .. ^1] else: file
+      let dest = destination & "/" & name
+      copyFile(file, dest)
+      discard chown(dest, (Uid) uid, (Gid) gid)
+    except:
+      discard
 
 proc perror*(s: cstring): void {.importc, header: "<stdio.h>".}
 template perror*: void = perror(getAppFilename())
