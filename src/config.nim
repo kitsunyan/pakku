@@ -20,14 +20,16 @@ type
     progressBar*: bool
     verbosePkgList*: bool
     pgpKeyserver*: Option[string]
+    defaultRoot*: bool
     ignorePkgs*: HashSet[string]
     ignoreGroups*: HashSet[string]
 
   PacmanConfig* = object of CommonConfig
-    rootOption*: Option[string]
-    dbOption*: Option[string]
-    cacheOption*: Option[string]
-    gpgOption*: Option[string]
+    sysrootOption*: Option[string]
+    rootRelOption*: Option[string]
+    dbRelOption*: Option[string]
+    cacheRelOption*: Option[string]
+    gpgRelOption*: Option[string]
     colorMode*: ColorMode
 
   Config* = object of CommonConfig
@@ -95,36 +97,42 @@ proc readConfigFile*(configFile: string):
 proc ignored*(config: Config, name: string, groups: openArray[string]): bool =
   name in config.ignorePkgs or (config.ignoreGroups * groups.toSet).len > 0
 
-proc isRootDefault*(config: Config): bool =
-  config.root == "/"
-
 proc get*(colorMode: ColorMode): bool =
   case colorMode:
     of ColorMode.colorNever: false
     of ColorMode.colorAlways: true
     of ColorMode.colorAuto: isatty(1) == 1
 
-proc root*(config: PacmanConfig): string =
-  config.rootOption.get("/")
+proc pacmanRootRel*(config: PacmanConfig): string =
+  config.rootRelOption.get("/")
 
-proc db*(config: PacmanConfig): string =
-  if config.dbOption.isSome:
-    config.dbOption.unsafeGet
+proc pacmanDbRel*(config: PacmanConfig): string =
+  if config.dbRelOption.isSome:
+    config.dbRelOption.unsafeGet
   else:
-    let root = config.root
+    let root = config.pacmanRootRel
     let workRoot = if root == "/": "" else: root
     workRoot & localStateDir & "/lib/pacman/"
 
-proc cache*(config: PacmanConfig): string =
-  config.cacheOption.get(localStateDir & "/cache/pacman/pkg")
+proc pacmanCacheRel*(config: PacmanConfig): string =
+  config.cacheRelOption.get(localStateDir & "/cache/pacman/pkg")
+
+proc simplifyConfigPath(path: string): string =
+  if path.find("//") >= 0:
+    simplifyConfigPath(path.replace("//", "/"))
+  else:
+    path
+
+proc extendRel*(pathRel: string, sysroot: Option[string]): string =
+  sysroot.map(s => (s & "/" & pathRel).simplifyConfigPath).get(pathRel)
 
 proc obtainConfig*(config: PacmanConfig): Config =
   let (configTable, _) = readConfigFile(sysConfDir & "/pakku.conf")
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
 
-  let root = config.root
-  let db = config.db
-  let cache = config.cache
+  let root = config.pacmanRootRel.extendRel(config.sysrootOption)
+  let db = config.pacmanDbRel.extendRel(config.sysrootOption)
+  let cache = config.pacmanCacheRel.extendRel(config.sysrootOption)
   let color = config.colorMode.get
 
   proc handleDirPattern(dirPattern: string, user: User): string =
@@ -160,6 +168,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
     tmpRootInitial: tmpRootInitial, tmpRootCurrent: tmpRootCurrent, color: color,
     dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
+    defaultRoot: config.defaultRoot and config.sysrootOption.isNone,
     ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
     aurComments: aurComments, checkIgnored: checkIgnored, printAurNotFound: printAurNotFound,
     sudoExec: sudoExec, viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt,

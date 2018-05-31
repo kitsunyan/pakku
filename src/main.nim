@@ -9,6 +9,10 @@ import
   "feature/syncsource",
   "feature/localquery"
 
+proc execSudo*(args: seq[Argument]): int =
+  execResult(sudoPrefix & getAppFilename() &
+    lc[x | (y <- args, x <- y.collectArg), string])
+
 proc passValidation(args: seq[Argument], config: Config,
   nonRootArgs: openArray[OptionPair], rootArgs: openArray[OptionPair],
   opts: varargs[seq[CommandOption]]): int =
@@ -90,11 +94,9 @@ proc handleSync(args: seq[Argument], config: Config): int =
     let printMode = args.check(%%%"print") or args.check(%%%"print-format")
 
     if currentUser.uid != 0 and config.sudoExec and not printMode:
-      let collectedArgs = sudoPrefix & getAppFilename() &
-        lc[x | (y <- args, x <- y.collectArg), string]
-      execResult(collectedArgs)
+      execSudo(args)
     else:
-      let isNonDefaultRoot = not config.isRootDefault
+      let isNonDefaultRoot = not config.defaultRoot
       let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
       let build = args.check(%%%"build")
@@ -224,6 +226,9 @@ let init = withErrorHandler(none(bool),
   elif operation != OperationType.invalid and
     parsedArgs.check((some("V"), "version")):
     let code = handleVersion()
+    raise haltError(code)
+  elif parsedArgs.check(%%%"sysroot") and currentUser.uid != 0:
+    let code = execSudo(parsedArgs)
     raise haltError(code)
   else:
     let pacmanConfig = obtainPacmanConfig(parsedArgs)

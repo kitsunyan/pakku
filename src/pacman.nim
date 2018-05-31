@@ -84,6 +84,7 @@ const
     ^o("logfile"),
     o("noconfirm"),
     o("confirm"),
+    ^o("sysroot"),
     ^o("ask")
   ]
 
@@ -278,9 +279,9 @@ proc pacmanRun*(root: bool, color: bool, args: varargs[Argument]): int =
   let argsSeq = @args
   forkWait(() => pacmanExec(root, color, argsSeq))
 
-proc pacmanValidateAndThrow(args: varargs[Argument]): void =
+proc pacmanValidateAndThrow(args: varargs[tuple[arg: Argument, pass: bool]]): void =
   let argsSeq = @args
-  let collectedArgs = lc[x | (y <- argsSeq, x <- y.collectArg), string]
+  let collectedArgs = lc[x | (y <- argsSeq, y.pass, x <- y.arg.collectArg), string]
   let code = forkWait(() => pacmanExecInternal(false, "-T" & collectedArgs))
   if code != 0:
     raise haltError(code)
@@ -291,10 +292,10 @@ proc getMachineName: Option[string] =
   if length > 0: some(utsname.machine.toString(some(length))) else: none(string)
 
 proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): PacmanConfig =
-  let root = table.opt("RootDir")
-  let db = table.opt("DBPath")
-  let cache = table.opt("CacheDir")
-  let gpg = table.opt("GPGDir")
+  let rootRel = table.opt("RootDir")
+  let dbRel = table.opt("DBPath")
+  let cacheRel = table.opt("CacheDir")
+  let gpgRel = table.opt("GPGDir")
   let color = if table.hasKey("Color"): ColorMode.colorAuto else: ColorMode.colorNever
   let verbosePkgList = table.hasKey("VerbosePkgLists")
   let arch = table.opt("Architecture").get("auto")
@@ -306,33 +307,38 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
     raise commandError(tr"can not get the architecture",
       colorNeeded = some(color.get))
 
-  PacmanConfig(rootOption: root, dbOption: db, cacheOption: cache, gpgOption: gpg,
+  PacmanConfig(sysrootOption: none(string), rootRelOption: rootRel,
+    dbRelOption: dbRel, cacheRelOption: cacheRel, gpgRelOption: gpgRel,
     dbs: dbs, arch: archFinal, colorMode: color, debug: false, progressBar: true,
-    verbosePkgList: verbosePkgList, pgpKeyserver: none(string),
+    verbosePkgList: verbosePkgList, pgpKeyserver: none(string), defaultRoot: true,
     ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   proc getAll(pair: OptionPair): seq[string] =
     args.filter(arg => arg.matchOption(pair)).map(arg => arg.value.get)
 
-  let configFile = getAll(%%%"config").optLast.get(sysConfDir & "/pacman.conf")
-  let (configTable, wasError) = readConfigFile(configFile)
+  let sysroot = args.filter(a => a.matchOption(%%%"sysroot")).optFirst.map(a => a.value).flatten
+
+  let configFileRel = getAll(%%%"config").optLast.get(sysConfDir & "/pacman.conf")
+  let (configTable, wasError) = readConfigFile(configFileRel.extendRel(sysroot))
 
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
   let dbs = toSeq(configTable.keys).filter(k => k != "options")
   let defaultConfig = createConfigFromTable(options, dbs)
 
   if wasError:
-    pacmanValidateAndThrow(("config", some(configFile), ArgumentType.long))
+    pacmanValidateAndThrow((("sysroot", sysroot, ArgumentType.long), sysroot.isSome),
+      (("config", some(configFileRel), ArgumentType.long), true))
+    raise haltError(1)
 
   proc getColor(color: string): ColorMode =
     let colors = toSeq(enumerate[ColorMode]())
     colors.filter(c => $c == color).optLast.get(ColorMode.colorNever)
 
-  let root = getAll(%%%"root").optLast.orElse(defaultConfig.rootOption)
-  let db = getAll(%%%"dbpath").optLast.orElse(defaultConfig.dbOption)
-  let cache = getAll(%%%"cachedir").optLast.orElse(defaultConfig.cacheOption)
-  let gpg = getAll(%%%"gpgdir").optLast.orElse(defaultConfig.gpgOption)
+  let rootRel = getAll(%%%"root").optLast.orElse(defaultConfig.rootRelOption)
+  let dbRel = getAll(%%%"dbpath").optLast.orElse(defaultConfig.dbRelOption)
+  let cacheRel = getAll(%%%"cachedir").optLast.orElse(defaultConfig.cacheRelOption)
+  let gpgRel = getAll(%%%"gpgdir").optLast.orElse(defaultConfig.gpgRelOption)
   let arch = getAll(%%%"arch").optLast.get(defaultConfig.arch)
   let colorStr = getAll(%%%"color").optLast.get($defaultConfig.colorMode)
   let color = getColor(colorStr)
@@ -362,7 +368,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
       else:
         var pgpKeyserver = none(string)
         var file: File
-        if file.open(gpg.get(sysConfDir & "/pacman.d/gnupg") & "/gpg.conf"):
+        if file.open(gpgRel.get(sysConfDir & "/pacman.d/gnupg").extendRel(sysroot) & "/gpg.conf"):
           try:
             while true:
               let line = file.readLine()
@@ -374,19 +380,26 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
             file.close()
         pgpKeyserver)
 
-  let config = PacmanConfig(rootOption: root, dbOption: db, cacheOption: cache, gpgOption: gpg,
+  let defaultRootRel = defaultConfig.rootRelOption.get("/")
+  let argsRootRel = rootRel.get("/")
+  let defaultRoot = defaultRootRel == argsRootRel
+
+  let config = PacmanConfig(sysrootOption: sysroot, rootRelOption: rootRel,
+    dbRelOption: dbRel, cacheRelOption: cacheRel, gpgRelOption: gpgRel,
     dbs: defaultConfig.dbs, arch: arch, colorMode: color, debug: debug,
     progressBar: progressBar, verbosePkgList: defaultConfig.verbosePkgList,
-    pgpKeyserver: pgpKeyserver, ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
+    pgpKeyserver: pgpKeyserver, defaultRoot: defaultRoot,
+    ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
     ignoreGroups: ignoreGroups + defaultConfig.ignoreGroups)
 
   if config.dbs.find("aur") >= 0:
     raise commandError(tr"repo '$#' is reserved by this program" % ["aur"],
       colorNeeded = some(color.get))
 
-  pacmanValidateAndThrow(("root", some(config.root), ArgumentType.long),
-    ("dbpath", some(config.db), ArgumentType.long),
-    ("arch", some(config.arch), ArgumentType.long),
-    ("color", some(colorStr), ArgumentType.long))
+  pacmanValidateAndThrow((("sysroot", sysroot, ArgumentType.long), sysroot.isSome),
+    (("root", some(config.pacmanRootRel), ArgumentType.long), not defaultRoot),
+    (("dbpath", some(config.pacmanDbRel), ArgumentType.long), true),
+    (("arch", some(config.arch), ArgumentType.long), true),
+    (("color", some(colorStr), ArgumentType.long), true))
 
   config
