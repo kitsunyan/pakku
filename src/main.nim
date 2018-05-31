@@ -216,39 +216,40 @@ let init = withErrorHandler(none(bool),
   tuple[parsedArgs: seq[Argument], config: Config]):
   let parsedArgs = splitArgs(commandLineParams(), optionsWithParameter,
     (operations.map(o => o.pair.long) & allOptions.map(o => o.pair.long)).deduplicate)
-  let pacmanConfig = obtainPacmanConfig(parsedArgs)
-  let config = obtainConfig(pacmanConfig)
-  (parsedArgs, config)
+  let operation = getOperation(parsedArgs)
+  if operation != OperationType.invalid and
+    parsedArgs.check(%%%"help"):
+    handleHelp(operation)
+    raise haltError(0)
+  elif operation != OperationType.invalid and
+    parsedArgs.check((some("V"), "version")):
+    let code = handleVersion()
+    raise haltError(code)
+  else:
+    let pacmanConfig = obtainPacmanConfig(parsedArgs)
+    let config = obtainConfig(pacmanConfig)
+    (parsedArgs, config)
 
 proc run(parsedArgs: seq[Argument], config: Config):
   tuple[success: Option[int], code: int] =
   withErrorHandler(some(config.color), int):
-    let operation = getOperation(parsedArgs)
-    if operation != OperationType.invalid and
-      parsedArgs.check(%%%"help"):
-      handleHelp(operation)
-      0
-    elif operation != OperationType.invalid and
-      parsedArgs.check((some("V"), "version")):
-      handleVersion()
-    else:
-      case operation:
-        of OperationType.database:
-          handleDatabase(parsedArgs, config)
-        of OperationType.files:
-          handleFiles(parsedArgs, config)
-        of OperationType.query:
-          handleQuery(parsedArgs, config)
-        of OperationType.remove:
-          handleRemove(parsedArgs, config)
-        of OperationType.sync:
-          handleSync(parsedArgs, config)
-        of OperationType.deptest:
-          handleDeptest(parsedArgs, config)
-        of OperationType.upgrade:
-          handleUpgrade(parsedArgs, config)
-        else:
-          passValidation(parsedArgs, config, [], [], allOptions)
+    case getOperation(parsedArgs):
+      of OperationType.database:
+        handleDatabase(parsedArgs, config)
+      of OperationType.files:
+        handleFiles(parsedArgs, config)
+      of OperationType.query:
+        handleQuery(parsedArgs, config)
+      of OperationType.remove:
+        handleRemove(parsedArgs, config)
+      of OperationType.sync:
+        handleSync(parsedArgs, config)
+      of OperationType.deptest:
+        handleDeptest(parsedArgs, config)
+      of OperationType.upgrade:
+        handleUpgrade(parsedArgs, config)
+      else:
+        passValidation(parsedArgs, config, [], [], allOptions)
 
 let runResult = if init.success.isSome:
     run(init.success.unsafeGet.parsedArgs, init.success.unsafeGet.config)

@@ -41,10 +41,10 @@ const
   pacmanCmd* = "/usr/bin/pacman"
   makepkgCmd* = "/usr/bin/makepkg"
 
-template haltError*(code: int): untyped =
+template haltError*(exitCode: int): untyped =
   var e: ref HaltError
   new(e)
-  e.code = code
+  e.code = exitCode
   e
 
 template commandError*(message: string, colorNeeded: Option[bool] = none(bool),
