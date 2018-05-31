@@ -104,7 +104,8 @@ const
     o("asexplicit"),
     ^o("ignore"),
     ^o("ignoregroup"),
-    o("needed")
+    o("needed"),
+    ^o("overwrite")
   ]
 
   queryOptions*: seq[CommandOption] = @[
