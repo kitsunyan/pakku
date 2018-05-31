@@ -162,8 +162,7 @@ proc handleSyncSource*(args: seq[Argument], config: Config): int =
     printError(config.color, trp("no targets specified (use -h for help)\n"))
     1
   else:
-    let (syncTargets, checkAurNames) = withAlpm(config.root, config.db,
-      config.dbs, config.arch, handle, dbs, errors):
+    let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
       for e in errors: printError(config.color, e)
       findSyncTargets(handle, dbs, targets, false, false)
 

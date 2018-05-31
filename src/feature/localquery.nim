@@ -4,8 +4,7 @@ import
   "../wrapper/alpm"
 
 proc handleQueryOrphans*(args: seq[Argument], config: Config): int =
-  let (installed, orphans, _) = withAlpm(config.root, config.db, newSeq[string](),
-    config.arch, handle, dbs, errors):
+  let (installed, orphans, _) = withAlpmConfig(config, false, handle, dbs, errors):
     for e in errors: printError(config.color, e)
     queryUnrequired(handle, true, false, initSet[string]())
 

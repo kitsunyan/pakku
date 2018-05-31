@@ -653,8 +653,7 @@ proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
     if directSome:
       printColon(config.color, tr"Resolving build targets...")
     echo(trp("resolving dependencies...\n"))
-  let (satisfied, unsatisfied, paths) = withAlpm(config.root, config.db,
-    config.dbs, config.arch, handle, dbs, errors):
+  let (satisfied, unsatisfied, paths) = withAlpmConfig(config, true, handle, dbs, errors):
     findDependencies(config, handle, dbs, pkgInfos, additionalPkgInfos,
       nodepsCount, assumeInstalled, printMode, noaur)
 
@@ -834,8 +833,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
     let assumeInstalled = args.assumeInstalled
     let skipDeps = assumeInstalled.len > 0 or nodepsCount > 0
 
-    let removedNames = withAlpm(config.root, config.db,
-      config.dbs, config.arch, handle, dbs, errors):
+    let removedNames = withAlpmConfig(config, true, handle, dbs, errors):
       for e in errors: printError(config.color, e)
       let newInstalledNames = lc[$p.name | (p <- handle.local.packages), string].toSet
       installed.map(i => i.name).filter(n => not (n in newInstalledNames)).toSet
@@ -862,8 +860,8 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
       clearPaths(paths)
       confirmAndResolveCode
     else:
-      let (_, initialUnrequired, initialUnrequiredWithoutOptional) = withAlpm(config.root,
-        config.db, newSeq[string](), config.arch, handle, dbs, errors):
+      let (_, initialUnrequired, initialUnrequiredWithoutOptional) =
+        withAlpmConfig(config, false, handle, dbs, errors):
         queryUnrequired(handle, true, true, keepNames)
 
       let (additionalCode, additionalSome) = if additionalPacmanTargets.len > 0: (block:
@@ -884,8 +882,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
         if basePackages.len > 0:
           # check all pacman dependencies were installed
           let unsatisfied = if nodepsCount <= 1:
-              withAlpm(config.root, config.db,
-                config.dbs, config.arch, handle, dbs, errors):
+              withAlpmConfig(config, true, handle, dbs, errors):
                 for e in errors: printError(config.color, e)
 
                 proc checkSatisfied(reference: PackageReference): bool =
@@ -922,8 +919,8 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
             clearPaths(paths)
 
             let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
-            let (_, finalUnrequired, finalUnrequiredWithoutOptional) = withAlpm(config.root,
-              config.db, newSeq[string](), config.arch, handle, dbs, errors):
+            let (_, finalUnrequired, finalUnrequiredWithoutOptional) =
+              withAlpmConfig(config, false, handle, dbs, errors):
               queryUnrequired(handle, true, true, newKeepNames)
 
             let unrequired = finalUnrequired - initialUnrequired
@@ -1194,8 +1191,7 @@ proc obtainPacmanBuildTargets(config: Config, pacmanTargets: seq[FullPackageTarg
 
 proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget], upgradeCount: int,
   noaur: bool, build: bool): (seq[SyncPackageTarget], seq[string], seq[Installed]) =
-  withAlpm(config.root, config.db,
-    config.dbs, config.arch, handle, dbs, errors):
+  withAlpmConfig(config, true, handle, dbs, errors):
     for e in errors: printError(config.color, e)
 
     let (syncTargets, checkAurNames) = findSyncTargets(handle, dbs, targets,

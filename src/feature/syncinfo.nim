@@ -103,8 +103,7 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
   let (_, callArgs) = checkAndRefresh(config.color, args)
   let targets = args.packageTargets(false)
 
-  let (syncTargets, checkAurNames) = withAlpm(config.root, config.db,
-    config.dbs, config.arch, handle, dbs, errors):
+  let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
     for e in errors: printError(config.color, e)
     findSyncTargets(handle, dbs, targets, false, false)
 

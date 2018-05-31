@@ -18,7 +18,7 @@ proc handleSyncSearch*(args: seq[Argument], config: Config): int =
     if quiet:
       aurPackages.map(pkg => (pkg, none(string)))
     elif aurPackages.len > 0:
-      withAlpm(config.root, config.db, newSeq[string](), config.arch, handle, dbs, errors):
+      withAlpmConfig(config, false, handle, dbs, errors):
         for e in errors: printError(config.color, e)
 
         aurPackages.map(proc (rpcInfo: RpcPackageInfo): Package =

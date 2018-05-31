@@ -164,3 +164,8 @@ proc obtainConfig*(config: PacmanConfig): Config =
     aurComments: aurComments, checkIgnored: checkIgnored, printAurNotFound: printAurNotFound,
     sudoExec: sudoExec, viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt,
     preBuildCommand: preBuildCommand)
+
+template withAlpmConfig*(config: Config, passDbs: bool,
+  handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =
+  withAlpm(config.root, config.db, if passDbs: config.dbs else: @[], config.arch,
+    handle, alpmDbs, errors, body)
