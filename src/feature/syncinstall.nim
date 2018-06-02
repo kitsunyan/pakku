@@ -1307,53 +1307,55 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
           finalPkgInfos, additionalPkgInfos, buildPaths & aurPaths)
 
 proc handleSyncInstall*(args: seq[Argument], config: Config): int =
-  let (_, callArgs) = checkAndRefresh(config.color, args)
+  let (refreshCode, callArgs) = checkAndRefresh(config.color, args)
+  if refreshCode != 0:
+    refreshCode
+  else:
+    let upgradeCount = args.count(%%%"sysupgrade")
+    let nodepsCount = args.count(%%%"nodeps")
+    let needed = args.check(%%%"needed")
+    let noaur = args.check(%%%"noaur")
+    let build = args.check(%%%"build")
 
-  let upgradeCount = args.count(%%%"sysupgrade")
-  let nodepsCount = args.count(%%%"nodeps")
-  let needed = args.check(%%%"needed")
-  let noaur = args.check(%%%"noaur")
-  let build = args.check(%%%"build")
+    let printModeArg = args.check(%%%"print")
+    let printModeFormat = args.filter(arg => arg.matchOption(%%%"print-format")).optLast
+    let printFormat = if printModeArg or printModeFormat.isSome:
+        some(printModeFormat.map(arg => arg.value.get).get("%l"))
+      else:
+        none(string)
 
-  let printModeArg = args.check(%%%"print")
-  let printModeFormat = args.filter(arg => arg.matchOption(%%%"print-format")).optLast
-  let printFormat = if printModeArg or printModeFormat.isSome:
-      some(printModeFormat.map(arg => arg.value.get).get("%l"))
-    else:
-      none(string)
+    let noconfirm = args
+      .filter(arg => arg.matchOption(%%%"confirm") or
+        arg.matchOption(%%%"noconfirm")).optLast
+      .map(arg => arg.key == "noconfirm").get(false) or
+      args.check(%%%"ask")
 
-  let noconfirm = args
-    .filter(arg => arg.matchOption(%%%"confirm") or
-      arg.matchOption(%%%"noconfirm")).optLast
-    .map(arg => arg.key == "noconfirm").get(false) or
-    args.check(%%%"ask")
+    let targets = args.packageTargets(false)
 
-  let targets = args.packageTargets(false)
+    withAur():
+      let (code, installed, targetNamesSet, pacmanTargets,
+        pkgInfos, additionalPkgInfos, paths) = resolveBuildTargets(config, targets,
+        printFormat.isSome, upgradeCount, noconfirm, needed, noaur, build)
 
-  withAur():
-    let (code, installed, targetNamesSet, pacmanTargets,
-      pkgInfos, additionalPkgInfos, paths) = resolveBuildTargets(config, targets,
-      printFormat.isSome, upgradeCount, noconfirm, needed, noaur, build)
+      let pacmanArgs = callArgs.filterExtensions(true, true,
+        commonOptions, transactionOptions, upgradeOptions, syncOptions)
+      if code != 0:
+        code
+      elif printFormat.isSome:
+        handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount, nodepsCount,
+          pacmanTargets, pkgInfos, additionalPkgInfos, noaur)
+      else:
+        let explicitsNamesSet = installed.filter(i => i.explicit).map(i => i.name).toSet
+        let depsNamesSet = installed.filter(i => not i.explicit).map(i => i.name).toSet
+        let keepNames = explicitsNamesSet + depsNamesSet + targetNamesSet
 
-    let pacmanArgs = callArgs.filterExtensions(true, true,
-      commonOptions, transactionOptions, upgradeOptions, syncOptions)
-    if code != 0:
-      code
-    elif printFormat.isSome:
-      handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount, nodepsCount,
-        pacmanTargets, pkgInfos, additionalPkgInfos, noaur)
-    else:
-      let explicitsNamesSet = installed.filter(i => i.explicit).map(i => i.name).toSet
-      let depsNamesSet = installed.filter(i => not i.explicit).map(i => i.name).toSet
-      let keepNames = explicitsNamesSet + depsNamesSet + targetNamesSet
+        let explicits = if args.check(%%%"asexplicit"):
+            targetNamesSet + explicitsNamesSet + depsNamesSet
+          elif args.check(%%%"asdeps"):
+            initSet[string]()
+          else:
+            explicitsNamesSet + (targetNamesSet - depsNamesSet)
 
-      let explicits = if args.check(%%%"asexplicit"):
-          targetNamesSet + explicitsNamesSet + depsNamesSet
-        elif args.check(%%%"asdeps"):
-          initSet[string]()
-        else:
-          explicitsNamesSet + (targetNamesSet - depsNamesSet)
-
-      handleInstall(pacmanArgs, config, upgradeCount, nodepsCount, noconfirm,
-        explicits, installed, pacmanTargets, pkgInfos, additionalPkgInfos, keepNames,
-        paths, build, noaur)
+        handleInstall(pacmanArgs, config, upgradeCount, nodepsCount, noconfirm,
+          explicits, installed, pacmanTargets, pkgInfos, additionalPkgInfos, keepNames,
+          paths, build, noaur)

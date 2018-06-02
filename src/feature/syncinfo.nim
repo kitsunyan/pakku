@@ -100,29 +100,32 @@ proc handleTarget(config: Config, padding: int, args: seq[Argument],
       pacmanRun(false, config.color, args & ($target, none(string), ArgumentType.target))
 
 proc handleSyncInfo*(args: seq[Argument], config: Config): int =
-  let (_, callArgs) = checkAndRefresh(config.color, args)
-  let targets = args.packageTargets(false)
-
-  let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
-    for e in errors: printError(config.color, e)
-    findSyncTargets(handle, dbs, targets, false, false)
-
-  let (pkgInfos, _, aerrors) = getAurPackageInfos(checkAurNames, config.arch)
-  for e in aerrors: printError(config.color, e)
-
-  let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos)
-
-  let code = min(aerrors.len, 1)
-  if fullTargets.filter(t => isAurTargetFull[PackageInfo](t) or t.repo == some("aur")).len == 0 and
-    fullTargets.filter(t => t.reference.constraint.isSome).len == 0:
-    if code == 0:
-      pacmanExec(false, config.color, callArgs)
-    else:
-      discard pacmanRun(false, config.color, callArgs)
-      code
+  let (refreshCode, callArgs) = checkAndRefresh(config.color, args)
+  if refreshCode != 0:
+    refreshCode
   else:
-    let finalArgs = callArgs.filter(arg => not arg.isTarget)
-    let padding = pacmanInfoStrings.map(s => s.trp).computeMaxLength
+    let targets = args.packageTargets(false)
 
-    let codes = code & lc[handleTarget(config, padding, finalArgs, x) | (x <- fullTargets), int]
-    codes.filter(c => c != 0).optFirst.get(0)
+    let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
+      for e in errors: printError(config.color, e)
+      findSyncTargets(handle, dbs, targets, false, false)
+
+    let (pkgInfos, _, aerrors) = getAurPackageInfos(checkAurNames, config.arch)
+    for e in aerrors: printError(config.color, e)
+
+    let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos)
+
+    let code = min(aerrors.len, 1)
+    if fullTargets.filter(t => isAurTargetFull[PackageInfo](t) or t.repo == some("aur") or
+      t.reference.constraint.isSome).len == 0:
+      if code == 0:
+        pacmanExec(false, config.color, callArgs)
+      else:
+        discard pacmanRun(false, config.color, callArgs)
+        code
+    else:
+      let finalArgs = callArgs.filter(arg => not arg.isTarget)
+      let padding = pacmanInfoStrings.map(s => s.trp).computeMaxLength
+
+      let codes = code & lc[handleTarget(config, padding, finalArgs, x) | (x <- fullTargets), int]
+      codes.filter(c => c != 0).optFirst.get(0)

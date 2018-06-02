@@ -153,28 +153,30 @@ proc cloneAndCopy(config: Config, quiet: bool,
     0
 
 proc handleSyncSource*(args: seq[Argument], config: Config): int =
-  discard checkAndRefresh(config.color, args)
-
-  let quiet = args.check(%%%"quiet")
-  let targets = args.packageTargets(true)
-
-  if targets.len == 0:
-    printError(config.color, trp("no targets specified (use -h for help)\n"))
-    1
+  let (refreshCode, _) = checkAndRefresh(config.color, args)
+  if refreshCode != 0:
+    refreshCode
   else:
-    let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
-      for e in errors: printError(config.color, e)
-      findSyncTargets(handle, dbs, targets, false, false)
+    let quiet = args.check(%%%"quiet")
+    let targets = args.packageTargets(true)
 
-    let (rpcInfos, aerrors) = getRpcPackageInfos(checkAurNames)
-    for e in aerrors: printError(config.color, e)
-
-    let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
-      rpcInfos, initTable[string, PackageReference]())
-
-    if notFoundTargets.len > 0:
-      printSyncNotFound(config, notFoundTargets)
+    if targets.len == 0:
+      printError(config.color, trp("no targets specified (use -h for help)\n"))
       1
     else:
-      let fullTargets = mapAurTargets[RpcPackageInfo](syncTargets, rpcInfos)
-      cloneAndCopy(config, quiet, fullTargets)
+      let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
+        for e in errors: printError(config.color, e)
+        findSyncTargets(handle, dbs, targets, false, false)
+
+      let (rpcInfos, aerrors) = getRpcPackageInfos(checkAurNames)
+      for e in aerrors: printError(config.color, e)
+
+      let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
+        rpcInfos, initTable[string, PackageReference]())
+
+      if notFoundTargets.len > 0:
+        printSyncNotFound(config, notFoundTargets)
+        1
+      else:
+        let fullTargets = mapAurTargets[RpcPackageInfo](syncTargets, rpcInfos)
+        cloneAndCopy(config, quiet, fullTargets)
