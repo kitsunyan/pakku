@@ -860,7 +860,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
       clearPaths(paths)
       confirmAndResolveCode
     else:
-      let (_, initialUnrequired, initialUnrequiredWithoutOptional) =
+      let (_, initialUnrequired, initialUnrequiredWithoutOptional, _) =
         withAlpmConfig(config, false, handle, dbs, errors):
         queryUnrequired(handle, true, true, keepNames)
 
@@ -919,7 +919,7 @@ proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodep
             clearPaths(paths)
 
             let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
-            let (_, finalUnrequired, finalUnrequiredWithoutOptional) =
+            let (_, finalUnrequired, finalUnrequiredWithoutOptional, _) =
               withAlpmConfig(config, false, handle, dbs, errors):
               queryUnrequired(handle, true, true, newKeepNames)
 
@@ -1265,8 +1265,8 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
         printMode, needed, upgradeCount)
     for e in aperrors: printError(config.color, e)
 
-    let upToDateNeededTable = upToDateNeeded.map(i => (i.name,
-      (i.name, none(string), some((ConstraintOperation.eq, i.version))))).toTable
+    let upToDateNeededTable: Table[string, PackageReference] = upToDateNeeded.map(i => (i.name,
+      (i.name, none(string), some((ConstraintOperation.eq, i.version, false))))).toTable
     let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
       aurPkgInfos, upToDateNeededTable)
 

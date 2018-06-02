@@ -4,16 +4,28 @@ import
   "../wrapper/alpm"
 
 proc handleQueryOrphans*(args: seq[Argument], config: Config): int =
-  let (installed, orphans, _) = withAlpmConfig(config, false, handle, dbs, errors):
+  let (installed, orphans, _, alternatives) = withAlpmConfig(config, false, handle, dbs, errors):
     for e in errors: printError(config.color, e)
     queryUnrequired(handle, true, false, initSet[string]())
 
-  let targets = args.targets.map(t => (if t[0 .. 5] == "local/": t[6 .. ^1] else: t))
+  let targets = args.packageTargets(false)
+
+  proc isOrphanOrNotFound(reference: PackageReference): bool =
+    for r in installed:
+      if reference.isProvidedBy(r, true):
+        return reference.name in orphans
+    for name, references in alternatives:
+      for r in references:
+        let hasConstraint = r.constraint.isSome and not r.constraint.unsafeGet.impliedVersion
+        if (not hasConstraint and reference.constraint.isNone and r.name == reference.name) or
+          (hasConstraint and reference.isProvidedBy(r, true)):
+          return name in orphans
+    return true
 
   # Provide similar output for not installed packages
-  let unknownTargets = targets.toSet - installed
   let results = if targets.len > 0:
-      targets.filter(t => t in orphans or t in unknownTargets)
+      targets.filter(t => (t.repo.isNone or t.repo == some("local")) and
+        t.reference.isOrphanOrNotFound).map(t => $t)
     else:
       toSeq(orphans.items).sorted(cmp)
 

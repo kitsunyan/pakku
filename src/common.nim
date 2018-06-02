@@ -187,8 +187,10 @@ proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
         destination: target.destination, foundInfos: target.foundInfos, pkgInfo: none(T)))
 
 proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptional: bool,
-  assumeExplicit: HashSet[string]): (HashSet[string], HashSet[string], HashSet[string]) =
-  let (explicit, dependsTable, alternatives) = block:
+  assumeExplicit: HashSet[string]): (seq[PackageReference], HashSet[string], HashSet[string],
+  Table[string, HashSet[PackageReference]]) =
+  let (installed, explicit, dependsTable, alternatives) = block:
+    var installed = newSeq[PackageReference]()
     var explicit = newSeq[string]()
     var dependsTable = initTable[string,
       HashSet[tuple[reference: PackageReference, optional: bool]]]()
@@ -198,7 +200,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       proc fixProvides(reference: PackageReference): PackageReference =
         if reference.constraint.isNone:
           (reference.name, reference.description,
-            some((ConstraintOperation.eq, $pkg.version)))
+            some((ConstraintOperation.eq, $pkg.version, true)))
         else:
           reference
 
@@ -209,6 +211,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       let provides = toSeq(pkg.provides.items)
         .map(d => d.toPackageReference).map(fixProvides).toSet
 
+      installed.add(pkg.toPackageReference)
       if pkg.reason == AlpmReason.explicit:
         explicit &= $pkg.name
       dependsTable.add($pkg.name,
@@ -216,7 +219,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       if provides.len > 0:
         alternatives.add($pkg.name, provides)
 
-    (explicit.toSet + assumeExplicit, dependsTable, alternatives)
+    (installed, explicit.toSet + assumeExplicit, dependsTable, alternatives)
 
   let providedBy = lc[(y, x.key) | (x <- alternatives.namedPairs, y <- x.value),
     tuple[reference: PackageReference, name: string]]
@@ -234,16 +237,16 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
     let checkNext = (direct.map(p => p.name).toSet + indirect) - full
     if checkNext.len > 0: findRequired(withOptional, full, checkNext) else: full
 
-  let installed = toSeq(dependsTable.keys).toSet
+  let installedNames = installed.map(i => i.name).toSet
 
   proc findOrphans(withOptional: bool): HashSet[string] =
     let required = findRequired(withOptional, initSet[string](), explicit)
-    installed - required
+    installedNames - required
 
   let withOptionalSet = if withOptional: findOrphans(true) else: initSet[string]()
   let withoutOptionalSet = if withoutOptional: findOrphans(false) else: initSet[string]()
 
-  (installed, withOptionalSet, withoutOptionalSet)
+  (installed, withOptionalSet, withoutOptionalSet, alternatives)
 
 proc `$`*[T: PackageTarget](target: T): string =
   target.repo.map(proc (r: string): string = r & "/" & $target.reference).get($target.reference)

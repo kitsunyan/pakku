@@ -12,7 +12,8 @@ type
 
   VersionConstraint* = tuple[
     operation: ConstraintOperation,
-    version: string
+    version: string,
+    impliedVersion: bool
   ]
 
   PackageReference* = tuple[
@@ -195,13 +196,13 @@ proc toPackageReference*(dependency: ptr AlpmDependency): PackageReference =
     else: none(ConstraintOperation)
 
   let description = if dependency.desc != nil: some($dependency.desc) else: none(string)
-  ($dependency.name, description, op.map(o => (o, $dependency.version)))
+  ($dependency.name, description, op.map(o => (o, $dependency.version, false)))
 
 template toPackageReference*(pkg: ptr AlpmPackage): PackageReference =
-  ($pkg.name, none(string), some((ConstraintOperation.eq, $pkg.version)))
+  ($pkg.name, none(string), some((ConstraintOperation.eq, $pkg.version, false)))
 
 template toPackageReference*(pkg: RpcPackageInfo): PackageReference =
-  (pkg.name, none(string), some((ConstraintOperation.eq, pkg.version)))
+  (pkg.name, none(string), some((ConstraintOperation.eq, pkg.version, false)))
 
 proc parsePackageReference*(name: string, withDescription: bool): PackageReference =
   var matches: array[3, string]
@@ -217,7 +218,7 @@ proc parsePackageReference*(name: string, withDescription: bool): PackageReferen
     let index = constraints.map(s => $s).find(matches[1])
 
     if index >= 0:
-      (matches[0], description, some((constraints[index], matches[2])))
+      (matches[0], description, some((constraints[index], matches[2], false)))
     else:
       (matches[0], description, none(VersionConstraint))
   else:
