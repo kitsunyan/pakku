@@ -259,15 +259,15 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
   proc collectFromPairs(pairs: seq[SrcInfoPair], keyName: string): seq[string] =
     lc[x.value | (x <- pairs, x.key == keyName), string]
 
-  proc collect(keyName: string): seq[string] =
-    let res = collectFromPairs(nameSeq[], keyName)
+  proc collect(baseOnly: bool, keyName: string): seq[string] =
+    let res = if baseOnly: @[] else: collectFromPairs(nameSeq[], keyName)
     if res.len == 0:
-      collectFromPairs(baseSeq[], keyName)
+      collectFromPairs(baseSeq[], keyName).filter(x => x.len > 0)
     else:
-      res
+      res.filter(x => x.len > 0)
 
-  proc collectArch(keyName: string): seq[PackageReference] =
-    (collect(keyName) & collect(keyName & "_" & arch))
+  proc collectArch(baseOnly: bool, keyName: string): seq[PackageReference] =
+    (collect(baseOnly, keyName) & collect(baseOnly, keyName & "_" & arch))
       .map(n => parsePackageReference(n, true))
       .filter(c => c.name.len > 0)
 
@@ -277,26 +277,29 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
 
   let base = lc[x.value | (x <- baseSeq[], x.key == "pkgbase"), string].optLast
 
-  let version = collect("pkgver").optLast
-  let release = collect("pkgrel").optLast
-  let epoch = collect("epoch").optLast
+  let version = collect(true, "pkgver").optLast
+  let release = collect(true, "pkgrel").optLast
+  let epoch = collect(true, "epoch").optLast
   let versionFull = lc[(v & "-" & r) | (v <- version, r <- release), string].optLast
     .map(v => epoch.map(e => e & ":" & v).get(v))
 
-  let description = collect("pkgdesc").optLast
-  let archs = collect("arch").filter(a => a != "any")
-  let url = collect("url").optLast
-  let licenses = collect("license")
-  let groups = collect("groups")
-  let pgpKeys = collect("validpgpkeys")
+  let description = collect(false, "pkgdesc").optLast
+  let archs = collect(false, "arch").filter(a => a != "any")
+  let url = collect(false, "url").optLast
+  let licenses = collect(false, "license")
+  let groups = collect(false, "groups")
+  let pgpKeys = collect(true, "validpgpkeys")
 
-  let depends = collectArch("depends")
-  let makeDepends = collectArch("makedepends").filterReferences(depends)
-  let checkDepends = collectArch("checkdepends").filterReferences(depends & makeDepends)
-  let optional = collectArch("optdepends")
-  let provides = collectArch("provides")
-  let conflicts = collectArch("conflicts")
-  let replaces = collectArch("replaces")
+  let baseDepends = collectArch(true, "depends")
+  let depends = collectArch(false, "depends")
+  let makeDepends = (baseDepends & collectArch(true, "makedepends"))
+    .deduplicate.filterReferences(depends)
+  let checkDepends = collectArch(true, "checkdepends")
+    .filterReferences(depends & makeDepends)
+  let optional = collectArch(false, "optdepends")
+  let provides = collectArch(false, "provides")
+  let conflicts = collectArch(false, "conflicts")
+  let replaces = collectArch(false, "replaces")
 
   let info = rpcInfos.filter(i => i.name == name).optLast
 
