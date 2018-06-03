@@ -22,8 +22,8 @@
 -		packages=( $(_call_program packages $cmd[@] -Sql) )
 +		packages=( $(_call_program packages $cmd[@] -Ssq ${words[CURRENT]}) )
 @@ -318,1 +327,1 @@
--		repositories=(${(o)${${${(M)${(f)"$(</etc/pacman.conf)"}:#\[*}/\[/}/\]/}:#options})
-+		repositories=(${(o)${${${(M)${(f)"$(</etc/pacman.conf)"}:#\[*}/\[/}/\]/}:#options} aur)
+-		repositories=($(pacman-conf --repo-list))
++		repositories=($(pacman-conf --repo-list) aur)
 @@ -361,1 +370,1 @@
 -	cmd=( "pacman" "2>/dev/null")
 +	cmd=("pakku" "2>/dev/null")
