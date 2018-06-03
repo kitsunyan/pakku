@@ -61,14 +61,8 @@ proc readConfigFile*(configFile: string):
         var matches: array[2, string]
 
         while true:
-          let rawLine = readLine(file).strip(leading = false, trailing = true)
-          let commentIndex = rawLine.find('#')
-          let line = if commentIndex >= 0:
-              rawLine[0 .. commentIndex - 1].strip(leading = false, trailing = true)
-            else:
-              rawLine
-
-          if line.len > 0:
+          let line = readLine(file).strip(leading = false, trailing = true)
+          if line.len > 0 and line[0] != '#':
             if line.match(re"\[(.*)\]", matches):
               currentCategory = matches[0]
               if table.hasKey(currentCategory):
