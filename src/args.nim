@@ -59,7 +59,8 @@ proc splitArgs*(params: seq[string],
       if stdinConsumed or isatty(0) == 1:
         raise commandError(trp("argument '-' specified without input on stdin\n").strip)
       else:
-        let args = lc[x | (y <- readLines(), x <- y.splitWhitespace), string]
+        let args = toSeq(readLines())
+          .filter(s => s.len > 0)
           .map(s => (s, none(string), ArgumentType.target))
 
         return (args, next, true, endOfOpts)
