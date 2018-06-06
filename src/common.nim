@@ -53,6 +53,13 @@ proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: 
   else:
     (0, args)
 
+proc noconfirm*(args: seq[Argument]): bool =
+  args
+    .filter(arg => arg.matchOption(%%%"confirm") or
+      arg.matchOption(%%%"noconfirm")).optLast
+    .map(arg => arg.key == "noconfirm").get(false) or
+    args.check(%%%"ask")
+
 proc packageTargets*(args: seq[Argument], parseDestination: bool): seq[PackageTarget] =
   args.targets.map(target => (block:
     let (noDestinationTarget, destination) = if parseDestination: (block:
@@ -450,6 +457,12 @@ proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): 
 
 template bareFullName*(bareKind: BareKind, bareName: string): string =
   $bareKind & "-" & bareName & ".git"
+
+proc bareFullNameDeconstruct*(bareKind: BareKind, bareFullName: string): Option[string] =
+  if bareFullName.find($bareKind & '-') == 0 and bareFullName.rfind(".git") == bareFullName.len - 4:
+    some(bareFullName[($bareKind).len + 1 .. ^5])
+  else:
+    none(string)
 
 proc cloneBareRepo(config: Config, bareKind: BareKind, bareName: string,
   url: string, branchOption: Option[string], dropPrivileges: bool): Option[string] =

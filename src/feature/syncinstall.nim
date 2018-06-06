@@ -1324,12 +1324,7 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
       else:
         none(string)
 
-    let noconfirm = args
-      .filter(arg => arg.matchOption(%%%"confirm") or
-        arg.matchOption(%%%"noconfirm")).optLast
-      .map(arg => arg.key == "noconfirm").get(false) or
-      args.check(%%%"ask")
-
+    let noconfirm = args.noconfirm
     let targets = args.packageTargets(false)
 
     withAur():

@@ -3,11 +3,12 @@ import
   args, config, format, pacman, utils
 
 import
+  "feature/localquery",
+  "feature/syncclean",
   "feature/syncinfo",
   "feature/syncinstall",
   "feature/syncsearch",
-  "feature/syncsource",
-  "feature/localquery"
+  "feature/syncsource"
 
 proc execSudo*(args: seq[Argument]): int =
   execResult(sudoPrefix & getAppFilename() &
@@ -81,6 +82,8 @@ proc handleSync(args: seq[Argument], config: Config): int =
     printError(config.color, trp("invalid option: '%s' and '%s' may not be used together\n") %
       ["--" & left, "--" & right])
     1
+  elif syncArgs.check(%%%"clean"):
+    handleSyncClean(args, config)
   elif syncArgs.check(%%%"info") and
     syncArgs.checkOpGroup(OpGroup.syncQuery):
     handleSyncInfo(args, config)
