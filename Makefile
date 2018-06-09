@@ -9,8 +9,7 @@ MAN_PAGES = \
 TARGETS =  \
 	completion/bash \
 	completion/zsh \
-	lib/bisect \
-	lib/install \
+	lib/tools \
 	src/pakku \
 	${MAN_PAGES}
 
@@ -113,16 +112,10 @@ ${MAN_PAGES}: ${MAN_PAGES:=.in}
 	-e '/^[\.'"'"']\\"/d' \
 	< "${@:=.in}" > "$@"
 
-lib/bisect: lib/bisect.nim
+lib/tools: lib/tools.nim $(shell find lib -name \*.nim)
 	@echo "NIM: $@"
 	@nim c ${NIM_OPTIONS} \
-	--nimcache:"${NIM_CACHE_DIR}/bisect" \
-	-o:"$@" "$<"
-
-lib/install: lib/install.nim
-	@echo "NIM: $@"
-	@nim c ${NIM_OPTIONS} \
-	--nimcache:"${NIM_CACHE_DIR}/install" \
+	--nimcache:"${NIM_CACHE_DIR}/tools" \
 	-o:"$@" "$<"
 
 src/pakku: src/main.nim $(shell find src -name \*.nim)
@@ -154,8 +147,11 @@ install:
 	$(call install,644,'completion/zsh','${ZSHCOMPLETIONSDIR}/_pakku')
 	$(call install,644,'doc/pakku.8','${MANDIR}/man8/pakku.8')
 	$(call install,644,'doc/pakku.conf.5','${MANDIR}/man5/pakku.conf.5')
-	$(call install,755,'lib/bisect','${PKGLIBDIR}/bisect')
-	$(call install,755,'lib/install','${PKGLIBDIR}/install')
+	$(call install,755,'lib/tools','${PKGLIBDIR}/tools')
+	@echo 'INSTALL: ${PKGLIBDIR}/bisect'
+	@ln -s tools ${DESTDIR}${PKGLIBDIR}/bisect
+	@echo 'INSTALL: ${PKGLIBDIR}/install'
+	@ln -s tools ${DESTDIR}${PKGLIBDIR}/install
 	$(call install,755,'src/pakku','${BINDIR}/pakku')
 	$(call install,644,'pakku.conf','${SYSCONFDIR}/pakku.conf')
 
@@ -164,6 +160,7 @@ uninstall:
 	$(call uninstall,'${ZSHCOMPLETIONSDIR}','_pakku')
 	$(call uninstall,'${MANDIR}/man8','pakku.8')
 	$(call uninstall,'${MANDIR}/man5','pakku.conf.5')
+	$(call uninstall,'${PKGLIBDIR}','tools')
 	$(call uninstall,'${PKGLIBDIR}','bisect')
 	$(call uninstall,'${PKGLIBDIR}','install')
 	$(call uninstall,'${BINDIR}','pakku')

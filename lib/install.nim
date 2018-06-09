@@ -1,35 +1,15 @@
-import future, os, posix, sequtils, strutils
+import future, os, posix, strutils
 
-let params = commandLineParams()
-let destination = params[0]
-let uid = params[1].parseInt
-let gid = params[2].parseInt
-let paramsStart = 3
-
-proc splitCommands(index: int, res: seq[seq[string]]): seq[seq[string]] =
+proc splitCommands(params: seq[string], index: int, res: seq[seq[string]]): seq[seq[string]] =
   if index < params.len:
     let count = params[index].parseInt
     let args = params[index + 1 .. index + count]
-    splitCommands(index + count + 1, res & args)
+    splitCommands(params, index + count + 1, res & args)
   else:
     res
 
-let commands = splitCommands(paramsStart, @[])
-let targets = lc[x | (y <- commands[1 .. ^1], x <- y), string]
-
-if uid >= 0 and gid >= 0:
-  for file in targets:
-    try:
-      let index = file.rfind("/")
-      let name = if index >= 0: file[index + 1 .. ^1] else: file
-      let dest = destination & "/" & name
-      copyFile(file, dest)
-      discard chown(dest, (Uid) uid, (Gid) gid)
-    except:
-      discard
-
 proc perror*(s: cstring): void {.importc, header: "<stdio.h>".}
-template perror*: void = perror(getAppFilename())
+template perror*: void = perror(paramStr(0))
 
 proc runCommand(params: seq[string]): int =
   if params.len > 0:
@@ -51,11 +31,31 @@ proc runCommand(params: seq[string]): int =
   else:
     0
 
-proc buildParams(index: int, asArg: string): seq[string] =
+proc buildParams(commands: seq[seq[string]], index: int, asArg: string): seq[string] =
   if commands[index].len > 0: commands[0] & asArg & "--" & commands[index] else: @[]
 
-let asdepsCode = runCommand(buildParams(1, "--asdeps"))
-if asdepsCode == 0:
-  programResult = runCommand(buildParams(2, "--asexplicit"))
-else:
-  programResult = asdepsCode
+proc handleInstall*(params: seq[string]): int =
+  let destination = params[0]
+  let uid = params[1].parseInt
+  let gid = params[2].parseInt
+  let paramsStart = 3
+
+  let commands = splitCommands(params, paramsStart, @[])
+  let targets = lc[x | (y <- commands[1 .. ^1], x <- y), string]
+
+  if uid >= 0 and gid >= 0:
+    for file in targets:
+      try:
+        let index = file.rfind("/")
+        let name = if index >= 0: file[index + 1 .. ^1] else: file
+        let dest = destination & "/" & name
+        copyFile(file, dest)
+        discard chown(dest, (Uid) uid, (Gid) gid)
+      except:
+        discard
+
+  let asdepsCode = runCommand(commands.buildParams(1, "--asdeps"))
+  if asdepsCode == 0:
+    runCommand(commands.buildParams(2, "--asexplicit"))
+  else:
+    asdepsCode
