@@ -99,19 +99,20 @@ template withCurl*(instance: untyped, body: untyped): untyped =
         else:
           raise newException(CurlError, tr"failed to perform request")
 
-    proc performInternal(url: string): seq[char] =
+    proc performInternal(url: string, useTimeout: bool): seq[char] =
+      let timeoutMs = if useTimeout: 15000 else: 0
       raiseError(handle.setOption(CurlOption.followLocation, (clong) 1))
       raiseError(handle.setOption(CurlOption.noSignal, (clong) 1))
-      raiseError(handle.setOption(CurlOption.timeoutMs, (clong) 15000))
-      raiseError(handle.setOption(CurlOption.connectTimeoutMs, (clong) 15000))
+      raiseError(handle.setOption(CurlOption.timeoutMs, (clong) timeoutMs))
+      raiseError(handle.setOption(CurlOption.connectTimeoutMs, (clong) timeoutMs))
       raiseError(handle.setOption(CurlOption.url, url))
       raiseError(handle.setOption(CurlOption.writeFunction, cast[pointer](curlWriteMemory)))
       raiseError(handle.setOption(CurlOption.writeData, instance))
       raiseError(handle.perform())
       instance.data
 
-    proc performString(url: string): string =
-      let data = performInternal(url)
+    proc performString(url: string, useTimeout: bool): string =
+      let data = performInternal(url, useTimeout)
       var str = newStringOfCap(data.len)
       for c in data:
         str.add(c)

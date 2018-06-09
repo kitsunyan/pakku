@@ -199,13 +199,13 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
       try:
         withAur():
           let (pkgInfos, additionalPkgInfos, paths) = if printMode: (block:
-              let (pkgInfos, additionalPkgInfos, aerrors) =
-                getAurPackageInfos(aurCheck.map(r => r.name), config.aurRepo, config.arch)
+              let (pkgInfos, additionalPkgInfos, aerrors) = getAurPackageInfos(aurCheck
+                .map(r => r.name), config.aurRepo, config.arch, config.downloadTimeout)
               for e in aerrors: printError(config.color, e)
               (pkgInfos, additionalPkgInfos, newSeq[string]()))
             else: (block:
               let (rpcInfos, aerrors) = getRpcPackageInfos(aurCheck.map(r => r.name),
-                config.aurRepo)
+                config.aurRepo, config.downloadTimeout)
               for e in aerrors: printError(config.color, e)
               let (pkgInfos, additionalPkgInfos, paths, cerrors) =
                 cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
@@ -1135,11 +1135,12 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   let (update, terminate) = createCloneProgress(config, fullRpcInfos.len, true, printMode)
 
   let (pkgInfos, additionalPkgInfos, paths, errors) = if printMode: (block:
-      let (pkgInfos, additionalPkgInfos, aerrors) =
-        getAurPackageInfos(fullRpcInfos.map(i => i.name), config.aurRepo, config.arch)
+      let (pkgInfos, additionalPkgInfos, aerrors) = getAurPackageInfos(fullRpcInfos
+        .map(i => i.name), config.aurRepo, config.arch, config.downloadTimeout)
       (pkgInfos, additionalPkgInfos, newSeq[string](), aerrors.deduplicate))
     else: (block:
-      let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name), config.aurRepo)
+      let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name),
+        config.aurRepo, config.downloadTimeout)
       let (pkgInfos, additionalPkgInfos, paths, cerrors) =
         cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
       (pkgInfos, additionalPkgInfos, paths, (toSeq(aerrors.items) & cerrors).deduplicate))
@@ -1248,7 +1249,8 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
     if checkAurNames.len > 0:
       echo(tr"checking AUR database...")
 
-  let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNames, config.aurRepo)
+  let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNames,
+    config.aurRepo, config.downloadTimeout)
   for e in rerrors: printError(config.color, e)
 
   let rpcNotFoundTargets = filterNotFoundSyncTargets(syncTargets,

@@ -19,6 +19,7 @@ type
     debug*: bool
     progressBar*: bool
     verbosePkgList*: bool
+    downloadTimeout*: bool
     pgpKeyserver*: Option[string]
     defaultRoot*: bool
     ignorePkgs*: HashSet[string]
@@ -167,8 +168,9 @@ proc obtainConfig*(config: PacmanConfig): Config =
     raise commandError(trp("could not register '%s' database (%s)\n") %
       [aurRepo, tra"wrong or NULL argument passed"], colorNeeded = some(color))
 
-  Config(dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
-    verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
+  Config(dbs: config.dbs, arch: config.arch, debug: config.debug,
+    progressBar: config.progressBar, verbosePkgList: config.verbosePkgList,
+    downloadTimeout: config.downloadTimeout, pgpKeyserver: config.pgpKeyserver,
     defaultRoot: config.defaultRoot and config.sysrootOption.isNone,
     ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
     root: root, db: db, cache: cache, userCacheInitial: userCacheInitial,

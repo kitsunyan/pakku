@@ -44,17 +44,18 @@ template withAur*(body: untyped): untyped =
   withCurlGlobal():
     body
 
-proc obtainPkgBaseSrcInfo(base: string): (string, Option[string]) =
+proc obtainPkgBaseSrcInfo(base: string, useTimeout: bool): (string, Option[string]) =
   try:
     withAur():
       withCurl(instance):
         let url = aurUrl & "cgit/aur.git/plain/.SRCINFO?h=" &
           instance.escape(base)
-        (performString(url), none(string))
+        (performString(url, useTimeout), none(string))
   except CurlError:
     ("", some(getCurrentException().msg))
 
-proc getRpcPackageInfos*(pkgs: seq[string], repo: string): (seq[RpcPackageInfo], Option[string]) =
+proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool):
+  (seq[RpcPackageInfo], Option[string]) =
   if pkgs.len == 0:
     (@[], none(string))
   else:
@@ -66,7 +67,7 @@ proc getRpcPackageInfos*(pkgs: seq[string], repo: string): (seq[RpcPackageInfo],
             .map(u => instance.escape(u))
             .foldl(a & "&arg[]=" & b)
 
-          let response = performString(url)
+          let response = performString(url, useTimeout)
           let results = parseJson(response)["results"]
           let table = lc[(x.name, x) | (y <- results, x <- parseRpcPackageInfo(y, repo)),
             (string, RpcPackageInfo)].toTable
@@ -76,13 +77,13 @@ proc getRpcPackageInfos*(pkgs: seq[string], repo: string): (seq[RpcPackageInfo],
       except JsonParsingError:
         (@[], some(tr"failed to parse server response"))
 
-proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string):
+proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeout: bool):
   (seq[PackageInfo], seq[PackageInfo], seq[string]) =
   if pkgs.len == 0:
     (@[], @[], @[])
   else:
     withAur():
-      let (rpcInfos, error) = getRpcPackageInfos(pkgs, repo)
+      let (rpcInfos, error) = getRpcPackageInfos(pkgs, repo, useTimeout)
 
       if error.isSome:
         (@[], @[], @[error.unsafeGet])
@@ -96,7 +97,7 @@ proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string):
         let deduplicated = lc[x.base | (x <- rpcInfos), string].deduplicate
 
         proc obtainAndParse(base: string, index: int): ParseResult =
-          let (srcInfo, operror) = obtainPkgBaseSrcInfo(base)
+          let (srcInfo, operror) = obtainPkgBaseSrcInfo(base, useTimeout)
 
           if operror.isSome:
             (@[], operror)
@@ -117,7 +118,8 @@ proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string):
 
         (pkgInfos, additionalPkgInfos, errors)
 
-proc findAurPackages*(query: seq[string], repo: string): (seq[RpcPackageInfo], Option[string]) =
+proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
+  (seq[RpcPackageInfo], Option[string]) =
   if query.len == 0 or query[0].len <= 2:
     (@[], none(string))
   else:
@@ -127,7 +129,7 @@ proc findAurPackages*(query: seq[string], repo: string): (seq[RpcPackageInfo], O
           let url = aurUrl & "rpc/?v=5&type=search&by=name&arg=" &
             instance.escape(query[0])
 
-          let response = performString(url)
+          let response = performString(url, useTimeout)
           let results = parseJson(response)["results"]
           let rpcInfos = lc[x | (y <- results, x <- parseRpcPackageInfo(y, repo)), RpcPackageInfo]
 
@@ -147,7 +149,7 @@ proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
     try:
       withCurl(instance):
         let url = aurUrl & "pkgbase/" & base & "/?comments=all"
-        (performString(url), none(string))
+        (performString(url, true), none(string))
     except CurlError:
       ("", some(getCurrentException().msg))
 

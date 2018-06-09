@@ -79,6 +79,7 @@ const
     ^o("color"),
     ^o("config"),
     o("debug"),
+    o("disable-download-timeout"),
     ^o("gpgdir"),
     ^o("hookdir"),
     ^o("logfile"),
@@ -299,6 +300,7 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
   let gpgRel = table.opt("GPGDir")
   let color = if table.hasKey("Color"): ColorMode.colorAuto else: ColorMode.colorNever
   let verbosePkgList = table.hasKey("VerbosePkgLists")
+  let downloadTimeout = not table.hasKey("DisableDownloadTimeout")
   let arch = table.opt("Architecture").get("auto")
   let ignorePkgs = table.opt("IgnorePkg").get("").splitWhitespace.toSet
   let ignoreGroups = table.opt("IgnoreGroup").get("").splitWhitespace.toSet
@@ -311,8 +313,8 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
   PacmanConfig(sysrootOption: none(string), rootRelOption: rootRel,
     dbRelOption: dbRel, cacheRelOption: cacheRel, gpgRelOption: gpgRel,
     dbs: dbs, arch: archFinal, colorMode: color, debug: false, progressBar: true,
-    verbosePkgList: verbosePkgList, pgpKeyserver: none(string), defaultRoot: true,
-    ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
+    verbosePkgList: verbosePkgList, downloadTimeout: downloadTimeout, pgpKeyserver: none(string),
+    defaultRoot: true, ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   proc getAll(pair: OptionPair): seq[string] =
@@ -336,6 +338,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
     let colors = toSeq(enumerate[ColorMode]())
     colors.filter(c => $c == color).optLast.get(ColorMode.colorNever)
 
+  let downloadTimeout = not args.check(%%%"disable-download-timeout")
   let rootRel = getAll(%%%"root").optLast.orElse(defaultConfig.rootRelOption)
   let dbRel = getAll(%%%"dbpath").optLast.orElse(defaultConfig.dbRelOption)
   let cacheRel = getAll(%%%"cachedir").optLast.orElse(defaultConfig.cacheRelOption)
@@ -389,6 +392,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
     dbRelOption: dbRel, cacheRelOption: cacheRel, gpgRelOption: gpgRel,
     dbs: defaultConfig.dbs, arch: arch, colorMode: color, debug: debug,
     progressBar: progressBar, verbosePkgList: defaultConfig.verbosePkgList,
+    downloadTimeout: defaultConfig.downloadTimeout and downloadTimeout,
     pgpKeyserver: pgpKeyserver, defaultRoot: defaultRoot,
     ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
     ignoreGroups: ignoreGroups + defaultConfig.ignoreGroups)
