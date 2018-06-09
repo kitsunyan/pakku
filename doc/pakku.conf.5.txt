@@ -35,6 +35,10 @@ Options
 	Check ignored packages for updates in AUR. Pakku will be able to warn
 	about ignored package upgrade.
 
+*IgnoreArch*::
+	Ignore a missing or incomplete arch field in the build script. Pakku
+	will pass '\--ignorearch' option to linkman:makepkg[8].
+
 *PrintAurNotFound*::
 	Print warnings during upgrade operation when foreign packages were not
 	found in AUR.

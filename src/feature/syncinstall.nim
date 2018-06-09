@@ -430,12 +430,13 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
             removeDirQuiet(buildPath & "src")
 
           let optional: seq[tuple[arg: string, cond: bool]] = @[
-            ("-e", noextract),
-            ("-m", not config.color),
-            ("-d", skipDeps)
+            ("--noextract", noextract),
+            ("--nocolor", not config.color),
+            ("--ignorearch", config.ignoreArch),
+            ("--nodeps", skipDeps)
           ]
 
-          execResult(@[makepkgCmd, "--config", workConfFile, "-f"] &
+          execResult(@[makepkgCmd, "--config", workConfFile, "--force"] &
             optional.filter(o => o.cond).map(o => o.arg)))
 
     discard unlink(workConfFile)
@@ -550,7 +551,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   let (buildResults, buildCode) = buildNext(0, nil)
 
   proc formatArchiveFile(pkgInfo: PackageInfo, ext: string): string =
-    let arch = if config.arch in pkgInfo.archs: config.arch else: "any"
+    let arch = if pkgInfo.archs.len > 0: config.arch else: "any"
     config.tmpRootInitial & "/" & pkgInfo.name & "-" & pkgInfo.version & "-" & arch & ext
 
   let allFiles = lc[(r.name, formatArchiveFile(r.pkgInfo, br.ext)) |

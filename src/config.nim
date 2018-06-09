@@ -45,6 +45,7 @@ type
     aurRepo*: string
     aurComments*: bool
     checkIgnored*: bool
+    ignoreArch*: bool
     printAurNotFound*: bool
     sudoExec*: bool
     viewNoDefault*: bool
@@ -152,6 +153,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let aurRepo = options.opt("AurRepo").get("aur")
   let aurComments = options.hasKey("AurComments")
   let checkIgnored = options.hasKey("CheckIgnored")
+  let ignoreArch = options.hasKey("IgnoreArch")
   let printAurNotFound = options.hasKey("PrintAurNotFound")
   let sudoExec = options.hasKey("SudoExec")
   let viewNoDefault = options.hasKey("ViewNoDefault")
@@ -176,8 +178,9 @@ proc obtainConfig*(config: PacmanConfig): Config =
     root: root, db: db, cache: cache, userCacheInitial: userCacheInitial,
     userCacheCurrent: userCacheCurrent, tmpRootInitial: tmpRootInitial,
     tmpRootCurrent: tmpRootCurrent, color: color, aurRepo: aurRepo, aurComments: aurComments,
-    checkIgnored: checkIgnored, printAurNotFound: printAurNotFound, sudoExec: sudoExec,
-    viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt, preBuildCommand: preBuildCommand)
+    checkIgnored: checkIgnored, ignoreArch: ignoreArch, printAurNotFound: printAurNotFound,
+    sudoExec: sudoExec, viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt,
+    preBuildCommand: preBuildCommand)
 
 template withAlpmConfig*(config: Config, passDbs: bool,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =
