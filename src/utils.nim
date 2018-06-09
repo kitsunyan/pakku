@@ -126,7 +126,7 @@ proc execResult*(args: varargs[string]): int =
   deallocCStringArray(cexec)
   code
 
-const
+let
   interruptSignals* = [SIGINT, SIGTERM]
 
 template blockSignals*(signals: openArray[cint],
