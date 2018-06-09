@@ -24,6 +24,10 @@ Options
 	Set the temporary directory in which pakku will perform all
 	building operations. The default value is +/tmp/pakku-$\{USER\}+.
 
+*AurRepo =* name::
+	Set the fake AUR repository name. This name should not conflict with
+	names of declared repositories. The default value is +aur+.
+
 *AurComments*::
 	Download and display comments for AUR packages.
 

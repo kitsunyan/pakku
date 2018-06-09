@@ -393,10 +393,6 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
     ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
     ignoreGroups: ignoreGroups + defaultConfig.ignoreGroups)
 
-  if config.dbs.find("aur") >= 0:
-    raise commandError(tr"repo '$#' is reserved by this program" % ["aur"],
-      colorNeeded = some(color.get))
-
   pacmanValidateAndThrow((("sysroot", sysroot, ArgumentType.long), sysroot.isSome),
     (("root", some(config.pacmanRootRel), ArgumentType.long), not defaultRoot),
     (("dbpath", some(config.pacmanDbRel), ArgumentType.long), true),

@@ -80,37 +80,40 @@ proc packageTargets*(args: seq[Argument], parseDestination: bool): seq[PackageTa
     let reference = parsePackageReference(nameConstraint, false)
     PackageTarget(reference: reference, repo: repo, destination: destination)))
 
-proc isAurTargetSync*(target: SyncPackageTarget): bool =
-  target.foundInfos.len == 0 and (target.repo.isNone or target.repo == some("aur"))
+proc isAurTargetSync*(target: SyncPackageTarget, aurRepo: string): bool =
+  target.foundInfos.len == 0 and (target.repo.isNone or target.repo == some(aurRepo))
 
-proc isAurTargetFull*[T: RpcPackageInfo](target: FullPackageTarget[T]): bool =
-  target.foundInfos.len > 0 and target.foundInfos[0].repo == "aur"
+proc isAurTargetFull*[T: RpcPackageInfo](target: FullPackageTarget[T], aurRepo: string): bool =
+  target.foundInfos.len > 0 and target.foundInfos[0].repo == aurRepo
 
 proc filterNotFoundSyncTargetsInternal(syncTargets: seq[SyncPackageTarget],
   pkgInfoReferencesTable: Table[string, PackageReference],
-  upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
+  upToDateNeededTable: Table[string, PackageReference],
+  aurRepo: string): seq[SyncPackageTarget] =
   # collect packages which were found neither in sync DB nor in AUR
   syncTargets.filter(t => not (upToDateNeededTable.opt(t.reference.name)
     .map(r => t.reference.isProvidedBy(r, true)).get(false)) and t.foundInfos.len == 0 and
-    not (t.isAurTargetSync and pkgInfoReferencesTable.opt(t.reference.name)
+    not (t.isAurTargetSync(aurRepo) and pkgInfoReferencesTable.opt(t.reference.name)
     .map(r => t.reference.isProvidedBy(r, true)).get(false)))
 
 proc filterNotFoundSyncTargets*[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
-  pkgInfos: seq[T], upToDateNeededTable: Table[string, PackageReference]): seq[SyncPackageTarget] =
+  pkgInfos: seq[T], upToDateNeededTable: Table[string, PackageReference],
+  aurRepo: string): seq[SyncPackageTarget] =
   let pkgInfoReferencesTable = pkgInfos.map(i => (i.name, i.toPackageReference)).toTable
-  filterNotFoundSyncTargetsInternal(syncTargets, pkgInfoReferencesTable, upToDateNeededTable)
+  filterNotFoundSyncTargetsInternal(syncTargets,
+    pkgInfoReferencesTable, upToDateNeededTable, aurRepo)
 
 proc printSyncNotFound*(config: Config, notFoundTargets: seq[SyncPackageTarget]) =
   let dbs = config.dbs.toSet
 
   for target in notFoundTargets:
-    if target.repo.isNone or target.repo == some("aur") or target.repo.unsafeGet in dbs:
+    if target.repo.isNone or target.repo == some(config.aurRepo) or target.repo.unsafeGet in dbs:
       printError(config.color, trp("target not found: %s\n") % [$target.reference])
     else:
       printError(config.color, trp("database not found: %s\n") % [target.repo.unsafeGet])
 
 proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
-  targets: seq[PackageTarget], allowGroups: bool, checkProvides: bool):
+  targets: seq[PackageTarget], aurRepo: string, allowGroups: bool, checkProvides: bool):
   (seq[SyncPackageTarget], seq[string]) =
   let dbTable = dbs.map(d => ($d.name, d)).toTable
 
@@ -168,18 +171,18 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
 
   let syncTargets = targets.map(t => SyncPackageTarget(reference: t.reference,
     repo: t.repo, destination: t.destination, foundInfos: findSync(t)))
-  let checkAurNames = syncTargets.filter(isAurTargetSync).map(t => t.reference.name)
+  let checkAurNames = syncTargets.filter(t => t.isAurTargetSync(aurRepo)).map(t => t.reference.name)
   (syncTargets, checkAurNames)
 
 proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
-  pkgInfos: seq[T]): seq[FullPackageTarget[T]] =
+  pkgInfos: seq[T], aurRepo: string): seq[FullPackageTarget[T]] =
   let aurTable = pkgInfos.map(i => (i.name, i)).toTable
 
   targets.map(proc (target: SyncPackageTarget): FullPackageTarget[T] =
     let res = if target.foundInfos.len == 0 and aurTable.hasKey(target.reference.name): (block:
         let pkgInfo = aurTable[target.reference.name]
         if target.reference.isProvidedBy(pkgInfo.toPackageReference, true):
-          some((("aur", some((pkgInfo.base, pkgInfo.version, none(string)))), pkgInfo))
+          some(((aurRepo, some((pkgInfo.base, pkgInfo.version, none(string)))), pkgInfo))
         else:
           none((SyncFoundInfo, T)))
       else:
@@ -716,7 +719,7 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
         except:
           ""
 
-        let addPkgInfos = parseSrcInfo("aur", srcInfos, config.arch,
+        let addPkgInfos = parseSrcInfo(config.aurRepo, srcInfos, config.arch,
           bases[index].gitUrl, none(string), rpcInfos)
         if keepRepos:
           cloneNext(index + 1, addPkgInfos ^& pkgInfos, repoPath ^& paths, errors)

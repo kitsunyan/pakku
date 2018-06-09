@@ -62,11 +62,11 @@ proc formatDate(date: Option[int64]): seq[string] =
 proc handleTarget(config: Config, padding: int, args: seq[Argument],
   target: FullPackageTarget[PackageInfo]): int =
   if target.foundInfos.len > 0:
-    if isAurTargetFull[PackageInfo](target):
+    if isAurTargetFull[PackageInfo](target, config.aurRepo):
       let pkgInfo = target.pkgInfo.unsafeGet
 
       printPackageInfo(padding, config.color,
-        (trp"Repository", @["aur"], false),
+        (trp"Repository", @[config.aurRepo], false),
         (trp"Name", @[pkgInfo.name], false),
         (trp"Version", @[pkgInfo.version], false),
         (trp"Description", toSeq(pkgInfo.description.items), false),
@@ -93,7 +93,7 @@ proc handleTarget(config: Config, padding: int, args: seq[Argument],
       pacmanRun(false, config.color, args &
         ($target, none(string), ArgumentType.target))
   else:
-    if target.repo == some("aur"):
+    if target.repo == some(config.aurRepo):
       printError(config.color, trp("package '%s' was not found\n") % [$target])
       1
     else:
@@ -108,16 +108,16 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
 
     let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
       for e in errors: printError(config.color, e)
-      findSyncTargets(handle, dbs, targets, false, false)
+      findSyncTargets(handle, dbs, targets, config.aurRepo, false, false)
 
-    let (pkgInfos, _, aerrors) = getAurPackageInfos(checkAurNames, config.arch)
+    let (pkgInfos, _, aerrors) = getAurPackageInfos(checkAurNames, config.aurRepo, config.arch)
     for e in aerrors: printError(config.color, e)
 
-    let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos)
+    let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos, config.aurRepo)
 
     let code = min(aerrors.len, 1)
-    if fullTargets.filter(t => isAurTargetFull[PackageInfo](t) or t.repo == some("aur") or
-      t.reference.constraint.isSome).len == 0:
+    if fullTargets.filter(t => isAurTargetFull[PackageInfo](t, config.aurRepo) or
+      t.repo == some(config.aurRepo) or t.reference.constraint.isSome).len == 0:
       if code == 0:
         pacmanExec(false, config.color, callArgs)
       else:

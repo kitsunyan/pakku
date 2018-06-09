@@ -41,6 +41,7 @@ type
     tmpRootInitial*: string
     tmpRootCurrent*: string
     color*: bool
+    aurRepo*: string
     aurComments*: bool
     checkIgnored*: bool
     printAurNotFound*: bool
@@ -147,6 +148,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let userCacheCurrent = obtainUserCacheDir(currentUser)
   let tmpRootInitial = obtainTmpDir(initialOrCurrentUser)
   let tmpRootCurrent = obtainTmpDir(currentUser)
+  let aurRepo = options.opt("AurRepo").get("aur")
   let aurComments = options.hasKey("AurComments")
   let checkIgnored = options.hasKey("CheckIgnored")
   let printAurNotFound = options.hasKey("PrintAurNotFound")
@@ -157,16 +159,23 @@ proc obtainConfig*(config: PacmanConfig): Config =
     .optLast.get(PreserveBuilt.disabled)
   let preBuildCommand = options.opt("PreBuildCommand")
 
-  Config(root: root, db: db, cache: cache,
-    userCacheInitial: userCacheInitial, userCacheCurrent: userCacheCurrent,
-    tmpRootInitial: tmpRootInitial, tmpRootCurrent: tmpRootCurrent, color: color,
-    dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
+  if config.dbs.find(aurRepo) >= 0:
+    raise commandError(tr"repo '$#' can not be used as fake AUR repository" % [aurRepo],
+      colorNeeded = some(color))
+
+  if aurRepo.find('/') >= 0:
+    raise commandError(trp("could not register '%s' database (%s)\n") %
+      [aurRepo, tra"wrong or NULL argument passed"], colorNeeded = some(color))
+
+  Config(dbs: config.dbs, arch: config.arch, debug: config.debug, progressBar: config.progressBar,
     verbosePkgList: config.verbosePkgList, pgpKeyserver: config.pgpKeyserver,
     defaultRoot: config.defaultRoot and config.sysrootOption.isNone,
     ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
-    aurComments: aurComments, checkIgnored: checkIgnored, printAurNotFound: printAurNotFound,
-    sudoExec: sudoExec, viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt,
-    preBuildCommand: preBuildCommand)
+    root: root, db: db, cache: cache, userCacheInitial: userCacheInitial,
+    userCacheCurrent: userCacheCurrent, tmpRootInitial: tmpRootInitial,
+    tmpRootCurrent: tmpRootCurrent, color: color, aurRepo: aurRepo, aurComments: aurComments,
+    checkIgnored: checkIgnored, printAurNotFound: printAurNotFound, sudoExec: sudoExec,
+    viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt, preBuildCommand: preBuildCommand)
 
 template withAlpmConfig*(config: Config, passDbs: bool,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =

@@ -113,7 +113,7 @@ proc cloneAndCopy(config: Config, quiet: bool,
   fullTargets: seq[FullPackageTarget[RpcPackageInfo]]): int =
   let baseTargets = fullTargets.foldl(block:
     let bases = a.map(x => x.base)
-    if b.isAurTargetFull:
+    if b.isAurTargetFull(config.aurRepo):
       let rpcInfo = b.pkgInfo.get
       if rpcInfo.base in bases:
         a
@@ -166,17 +166,17 @@ proc handleSyncSource*(args: seq[Argument], config: Config): int =
     else:
       let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
         for e in errors: printError(config.color, e)
-        findSyncTargets(handle, dbs, targets, false, false)
+        findSyncTargets(handle, dbs, targets, config.aurRepo, false, false)
 
-      let (rpcInfos, aerrors) = getRpcPackageInfos(checkAurNames)
+      let (rpcInfos, aerrors) = getRpcPackageInfos(checkAurNames, config.aurRepo)
       for e in aerrors: printError(config.color, e)
 
       let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
-        rpcInfos, initTable[string, PackageReference]())
+        rpcInfos, initTable[string, PackageReference](), config.aurRepo)
 
       if notFoundTargets.len > 0:
         printSyncNotFound(config, notFoundTargets)
         1
       else:
-        let fullTargets = mapAurTargets[RpcPackageInfo](syncTargets, rpcInfos)
+        let fullTargets = mapAurTargets[RpcPackageInfo](syncTargets, rpcInfos, config.aurRepo)
         cloneAndCopy(config, quiet, fullTargets)

@@ -200,11 +200,12 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
         withAur():
           let (pkgInfos, additionalPkgInfos, paths) = if printMode: (block:
               let (pkgInfos, additionalPkgInfos, aerrors) =
-                getAurPackageInfos(aurCheck.map(r => r.name), config.arch)
+                getAurPackageInfos(aurCheck.map(r => r.name), config.aurRepo, config.arch)
               for e in aerrors: printError(config.color, e)
               (pkgInfos, additionalPkgInfos, newSeq[string]()))
             else: (block:
-              let (rpcInfos, aerrors) = getRpcPackageInfos(aurCheck.map(r => r.name))
+              let (rpcInfos, aerrors) = getRpcPackageInfos(aurCheck.map(r => r.name),
+                config.aurRepo)
               for e in aerrors: printError(config.color, e)
               let (pkgInfos, additionalPkgInfos, paths, cerrors) =
                 cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
@@ -351,7 +352,7 @@ proc editLoop(config: Config, repo: string, base: string, repoPath: string,
     else:
       res
 
-  let (hasChanges, noTag) = if repo == "aur": (block:
+  let (hasChanges, noTag) = if repo == config.aurRepo: (block:
       let revisions = forkWaitRedirect(() => (block:
         dropPrivilegesAndChdir(none(string)):
           execResult(gitCmd, "-C", repoPath, "rev-list", tag & "..@")))
@@ -609,7 +610,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         let cachePath = config.userCacheInitial.cache(CacheKind.repositories)
         for pkgInfos in basePackages:
           let repo = pkgInfos[0].repo
-          if repo == "aur":
+          if repo == config.aurRepo:
             let base = pkgInfos[0].base
             let fullName = bareFullName(BareKind.pkg, base)
             let bareRepoPath = repoPath(cachePath, fullName)
@@ -696,7 +697,7 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
           let base = pkgInfos[0].base
           let repoPath = repoPath(config.tmpRootInitial, base)
 
-          let aur = repo == "aur"
+          let aur = repo == config.aurRepo
 
           if not skipEdit and aur and not noconfirm and config.aurComments:
             echo(tr"downloading comments from AUR...")
@@ -975,7 +976,7 @@ proc handlePrint(args: seq[Argument], config: Config, printFormat: string,
       echo(printFormat
         .replace("%n", pkgInfo.name)
         .replace("%v", pkgInfo.version)
-        .replace("%r", "aur")
+        .replace("%r", config.aurRepo)
         .replace("%s", "0")
         .replace("%l", pkgInfo.gitUrl))
 
@@ -1003,7 +1004,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
   if upgradeCount == 1:
     for localIsNewer in localIsNewerSeq:
       printWarning(config.color, tra("%s: local (%s) is newer than %s (%s)\n") %
-        [localIsNewer.name, localIsNewer.version, "aur", localIsNewer.aurVersion])
+        [localIsNewer.name, localIsNewer.version, config.aurRepo, localIsNewer.aurVersion])
 
   for inst in upToDateNeeded:
     printWarning(config.color, tra("%s-%s is up to date -- skipping\n") %
@@ -1030,7 +1031,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
             [pkgInfo.name, installedVersion, newVersion])
       else:
         printWarning(config.color, trp("skipping target: %s\n") % [pkgInfo.name])
-    elif pkgInfo.repo == "aur":
+    elif pkgInfo.repo == config.aurRepo:
       if pkgInfo.maintainer.isNone:
         printWarning(config.color, tr"$# is orphaned" % [pkgInfo.name])
       if installedTable.hasKey(pkgInfo.name):
@@ -1135,10 +1136,10 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
 
   let (pkgInfos, additionalPkgInfos, paths, errors) = if printMode: (block:
       let (pkgInfos, additionalPkgInfos, aerrors) =
-        getAurPackageInfos(fullRpcInfos.map(i => i.name), config.arch)
+        getAurPackageInfos(fullRpcInfos.map(i => i.name), config.aurRepo, config.arch)
       (pkgInfos, additionalPkgInfos, newSeq[string](), aerrors.deduplicate))
     else: (block:
-      let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name))
+      let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name), config.aurRepo)
       let (pkgInfos, additionalPkgInfos, paths, cerrors) =
         cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
       (pkgInfos, additionalPkgInfos, paths, (toSeq(aerrors.items) & cerrors).deduplicate))
@@ -1194,7 +1195,7 @@ proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget], u
   withAlpmConfig(config, true, handle, dbs, errors):
     for e in errors: printError(config.color, e)
 
-    let (syncTargets, checkAurNames) = findSyncTargets(handle, dbs, targets,
+    let (syncTargets, checkAurNames) = findSyncTargets(handle, dbs, targets, config.aurRepo,
       not build, not build)
 
     proc checkReplaceable(name: string): bool =
@@ -1247,18 +1248,19 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
     if checkAurNames.len > 0:
       echo(tr"checking AUR database...")
 
-  let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNames)
+  let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNames, config.aurRepo)
   for e in rerrors: printError(config.color, e)
 
   let rpcNotFoundTargets = filterNotFoundSyncTargets(syncTargets,
-    rpcInfos, initTable[string, PackageReference]())
+    rpcInfos, initTable[string, PackageReference](), config.aurRepo)
 
   if rpcNotFoundTargets.len > 0:
     printSyncNotFound(config, rpcNotFoundTargets)
     errorResult
   else:
     let installedTable = installed.map(i => (i.name, i)).toTable
-    let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos).filter(isAurTargetFull)
+    let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos, config.aurRepo)
+      .filter(t => t.isAurTargetFull(config.aurRepo))
 
     let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
       obtainAurPackageInfos(config, rpcInfos, rpcAurTargets, installedTable,
@@ -1268,7 +1270,7 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
     let upToDateNeededTable: Table[string, PackageReference] = upToDateNeeded.map(i => (i.name,
       (i.name, none(string), some((ConstraintOperation.eq, i.version, false))))).toTable
     let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
-      aurPkgInfos, upToDateNeededTable)
+      aurPkgInfos, upToDateNeededTable, config.aurRepo)
 
     if notFoundTargets.len > 0:
       clearPaths(aurPaths)
@@ -1277,9 +1279,9 @@ proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
     else:
       let fullTargets = mapAurTargets(syncTargets
         .filter(t => not (upToDateNeededTable.opt(t.reference.name)
-        .map(r => t.reference.isProvidedBy(r, true)).get(false))), aurPkgInfos)
-      let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t))
-      let aurTargets = fullTargets.filter(isAurTargetFull)
+        .map(r => t.reference.isProvidedBy(r, true)).get(false))), aurPkgInfos, config.aurRepo)
+      let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
+      let aurTargets = fullTargets.filter(t => isAurTargetFull(t, config.aurRepo))
 
       let (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths,
         obtainBuildErrorMessages) = obtainPacmanBuildTargets(config, pacmanTargets, installedTable,

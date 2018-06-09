@@ -16,7 +16,7 @@ const
 template gitUrl(base: string): string =
   aurUrl & base & ".git"
 
-proc parseRpcPackageInfo(obj: JsonNode): Option[RpcPackageInfo] =
+proc parseRpcPackageInfo(obj: JsonNode, repo: string): Option[RpcPackageInfo] =
   template optInt64(i: int64): Option[int64] =
     if i > 0: some(i) else: none(int64)
 
@@ -33,7 +33,7 @@ proc parseRpcPackageInfo(obj: JsonNode): Option[RpcPackageInfo] =
   let popularity = obj["Popularity"].getFloat(0)
 
   if base.len > 0 and name.len > 0:
-    some(RpcPackageInfo(repo: "aur", base: base, name: name, version: version,
+    some(RpcPackageInfo(repo: repo, base: base, name: name, version: version,
       description: description, maintainer: maintainer,
       firstSubmitted: firstSubmitted, lastModified: lastModified,
       votes: votes, popularity: popularity, gitUrl: gitUrl(base), gitSubdir: none(string)))
@@ -54,7 +54,7 @@ proc obtainPkgBaseSrcInfo(base: string): (string, Option[string]) =
   except CurlError:
     ("", some(getCurrentException().msg))
 
-proc getRpcPackageInfos*(pkgs: seq[string]): (seq[RpcPackageInfo], Option[string]) =
+proc getRpcPackageInfos*(pkgs: seq[string], repo: string): (seq[RpcPackageInfo], Option[string]) =
   if pkgs.len == 0:
     (@[], none(string))
   else:
@@ -68,7 +68,7 @@ proc getRpcPackageInfos*(pkgs: seq[string]): (seq[RpcPackageInfo], Option[string
 
           let response = performString(url)
           let results = parseJson(response)["results"]
-          let table = lc[(x.name, x) | (y <- results, x <- parseRpcPackageInfo(y)),
+          let table = lc[(x.name, x) | (y <- results, x <- parseRpcPackageInfo(y, repo)),
             (string, RpcPackageInfo)].toTable
           (lc[x | (p <- pkgs, x <- table.opt(p)), RpcPackageInfo], none(string))
       except CurlError:
@@ -76,13 +76,13 @@ proc getRpcPackageInfos*(pkgs: seq[string]): (seq[RpcPackageInfo], Option[string
       except JsonParsingError:
         (@[], some(tr"failed to parse server response"))
 
-proc getAurPackageInfos*(pkgs: seq[string], arch: string):
+proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string):
   (seq[PackageInfo], seq[PackageInfo], seq[string]) =
   if pkgs.len == 0:
     (@[], @[], @[])
   else:
     withAur():
-      let (rpcInfos, error) = getRpcPackageInfos(pkgs)
+      let (rpcInfos, error) = getRpcPackageInfos(pkgs, repo)
 
       if error.isSome:
         (@[], @[], @[error.unsafeGet])
@@ -101,7 +101,7 @@ proc getAurPackageInfos*(pkgs: seq[string], arch: string):
           if operror.isSome:
             (@[], operror)
           else:
-            let pkgInfos = parseSrcInfo("aur", srcInfo, arch,
+            let pkgInfos = parseSrcInfo(repo, srcInfo, arch,
               gitUrl(base), none(string), rpcInfos)
             (pkgInfos, none(string))
 
@@ -117,7 +117,7 @@ proc getAurPackageInfos*(pkgs: seq[string], arch: string):
 
         (pkgInfos, additionalPkgInfos, errors)
 
-proc findAurPackages*(query: seq[string]): (seq[RpcPackageInfo], Option[string]) =
+proc findAurPackages*(query: seq[string], repo: string): (seq[RpcPackageInfo], Option[string]) =
   if query.len == 0 or query[0].len <= 2:
     (@[], none(string))
   else:
@@ -129,7 +129,7 @@ proc findAurPackages*(query: seq[string]): (seq[RpcPackageInfo], Option[string])
 
           let response = performString(url)
           let results = parseJson(response)["results"]
-          let rpcInfos = lc[x | (y <- results, x <- parseRpcPackageInfo(y)), RpcPackageInfo]
+          let rpcInfos = lc[x | (y <- results, x <- parseRpcPackageInfo(y, repo)), RpcPackageInfo]
 
           let filteredRpcInfos = if query.len > 1: (block:
               let queryLow = query[1 .. ^1].map(q => q.toLowerAscii)

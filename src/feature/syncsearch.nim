@@ -11,7 +11,7 @@ proc handleSyncSearch*(args: seq[Argument], config: Config): int =
   else:
     let quiet = args.check(%%%"quiet")
 
-    let (aurPackages, aerrors) = findAurPackages(args.targets)
+    let (aurPackages, aerrors) = findAurPackages(args.targets, config.aurRepo)
     for e in aerrors: printError(config.color, e)
 
     type Package = tuple[rpcInfo: RpcPackageInfo, installedVersion: Option[string]]
@@ -49,7 +49,7 @@ proc handleSyncSearch*(args: seq[Argument], config: Config): int =
         if quiet:
           echo(pkg.rpcInfo.name)
         else:
-          printPackageSearch(config.color, "aur", pkg.rpcInfo.name,
+          printPackageSearch(config.color, config.aurRepo, pkg.rpcInfo.name,
             pkg.rpcInfo.version, pkg.installedVersion, pkg.rpcInfo.description,
             some(formatPkgRating(pkg.rpcInfo.votes, pkg.rpcInfo.popularity)))
       0
