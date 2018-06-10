@@ -582,10 +582,24 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       handleTmpRoot(false)
       (newSeq[(string, string)](), 1)
     else:
-      let pacmanParams = pacmanCmd & pacmanParams(config.color,
-        commonArgs & ("U", none(string), ArgumentType.short))
-      let asdeps = install.filter(p => not (p.name in explicits)).map(p => p.file)
-      let asexplicit = install.filter(p => p.name in explicits).map(p => p.file)
+      let installWithReason = withAlpmConfig(config, false, handle, dbs, errors):
+        let local = handle.local
+        install.map(proc (pkg: auto): tuple[name: string, file: string, mode: string] =
+          let explicit = pkg.name in explicits
+          let package = local[pkg.name]
+          let mode = if package != nil: (block:
+            let installedExplicitly = package.reason == AlpmReason.explicit
+            if explicit == installedExplicitly:
+              "auto"
+            elif explicit:
+              "explicit"
+            else:
+              "dependency")
+            elif explicit:
+              "auto"
+            else:
+              "dependency"
+          (pkg.name, pkg.file, mode))
 
       let (cacheDir, cacheUser, cacheGroup) = if config.preserveBuilt == PreserveBuilt.internal:
           (config.cache, 0, 0)
@@ -599,9 +613,17 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
           # pass -1 values to disable caching
           ("", -1, -1)
 
+      let pacmanUpgradeParams = pacmanCmd & pacmanParams(config.color,
+        commonArgs & ("U", none(string), ArgumentType.short))
+
+      let pacmanDatabaseParams = pacmanCmd & pacmanParams(config.color,
+        commonArgs.keepOnlyOptions(commonOptions) & ("D", none(string), ArgumentType.short))
+
       let installParams = sudoPrefix & (pkgLibDir & "/install") &
         cacheDir & $cacheUser & $cacheGroup &
-        $pacmanParams.len & pacmanParams & $asdeps.len & asdeps & $asexplicit.len & asexplicit
+        $pacmanUpgradeParams.len & pacmanUpgradeParams &
+        $pacmanDatabaseParams.len & pacmanDatabaseParams &
+        lc[x | (i <- installWithReason, x <- [i.name, i.file, i.mode]), string]
 
       let code = forkWait(() => execResult(installParams))
       if code != 0:
