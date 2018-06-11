@@ -56,6 +56,14 @@ proc createCloneProgress(config: Config, count: int, flexible: bool, printMode: 
   else:
     (proc (a: int, b: int) {.closure.} = discard, proc {.closure.} = discard)
 
+proc isVcs(name: string): bool =
+  let index = name.rfind('-')
+  if index >= 0:
+    let suffix = name[index + 1 .. ^1]
+    suffix == "bzr" or suffix == "git" or suffix == "hg" or suffix == "svn"
+  else:
+    false
+
 proc orderInstallation(ordered: seq[seq[seq[PackageInfo]]], grouped: seq[seq[PackageInfo]],
   satisfied: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
   let orderedNamesSet = lc[c.name | (a <- ordered, b <- a, c <- b), string].toSet
@@ -1060,7 +1068,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
       if installedTable.hasKey(pkgInfo.name):
         let installedVersion = installedTable[pkgInfo.name].version
         let newVersion = pkgInfo.version
-        if vercmp(newVersion, installedVersion) < 0:
+        if vercmp(newVersion, installedVersion) < 0 and not pkgInfo.name.isVcs:
           printWarning(config.color,
             tra("%s: downgrading from version %s to version %s\n") %
             [pkgInfo.name, installedVersion, newVersion])
@@ -1140,8 +1148,7 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
     localIsNewer: Option[LocalIsNewer]]] = installedUpgradeRpcInfos
     .map(i => (block:
       let res = installed.checkNeeded(i.name, i.version, upgradeCount >= 2)
-      let gitPackage = i.name.len > 4 and i.name[i.name.len - 4 .. i.name.len - 1] == "-git"
-      let (newNeeded, localIsNewer) = if gitPackage:
+      let (newNeeded, localIsNewer) = if i.name.isVcs:
           # Don't warn about newer local git packages and don't downgrade them
           (installed.checkNeeded(i.name, i.version, false).needed, none(LocalIsNewer))
         elif not res.needed and res.vercmp < 0:
