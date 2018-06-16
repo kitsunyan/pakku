@@ -10,8 +10,7 @@ type
     version: string,
     groups: seq[string],
     explicit: bool,
-    foreign: bool,
-    foreignUpgrade: bool
+    foreign: bool
   ]
 
   SatisfyResult = tuple[
@@ -677,13 +676,11 @@ proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo],
     newSeq[PackageInfo]())
 
 proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
-  additionalPkgInfos: seq[PackageInfo], printMode: bool, directSome: bool,
+  additionalPkgInfos: seq[PackageInfo], printMode: bool,
   nodepsCount: int, assumeInstalled: seq[PackageReference], noaur: bool):
   (bool, Table[PackageReference, SatisfyResult],
   seq[string], seq[seq[seq[PackageInfo]]], seq[string]) =
   if pkgInfos.len > 0 and not printMode:
-    if directSome:
-      printColon(config.color, tr"Resolving build targets...")
     echo(trp("resolving dependencies...\n"))
   let (satisfied, unsatisfied, paths) = withAlpmConfig(config, true, handle, dbs, errors):
     findDependencies(config, handle, dbs, pkgInfos, additionalPkgInfos,
@@ -834,191 +831,6 @@ proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
   else:
     0
 
-proc assumeInstalled(args: seq[Argument]): seq[PackageReference] =
-  args
-    .filter(a => a.matchOption(%%%"assume-installed"))
-    .map(a => a.value.get.parsePackageReference(false))
-    .filter(r => r.constraint.isNone or
-      r.constraint.unsafeGet.operation == ConstraintOperation.eq)
-
-proc handleInstall(args: seq[Argument], config: Config, upgradeCount: int, nodepsCount: int,
-  noconfirm: bool, explicits: HashSet[string], installed: seq[Installed],
-  pacmanTargets: seq[FullPackageTarget[PackageInfo]], pkgInfos: seq[PackageInfo],
-  additionalPkgInfos: seq[PackageInfo], keepNames: HashSet[string],
-  initialPaths: seq[string], build: bool, noaur: bool): int =
-  let workDirectPacmanTargets = if build: @[] else: pacmanTargets.map(`$`)
-
-  let (directCode, directSome) = if workDirectPacmanTargets.len > 0 or upgradeCount > 0:
-      (pacmanRun(true, config.color, args.filter(arg => not arg.isTarget) &
-        workDirectPacmanTargets.map(t => (t, none(string), ArgumentType.target))), true)
-    else:
-      (0, false)
-
-  if directCode != 0:
-    clearPaths(initialPaths)
-    directCode
-  else:
-    let commonArgs = args
-      .keepOnlyOptions(commonOptions, transactionOptions, upgradeOptions)
-      .filter(true, false, %%%"asdeps", %%%"asexplicit", %%%"needed")
-
-    let assumeInstalled = args.assumeInstalled
-    let skipDeps = assumeInstalled.len > 0 or nodepsCount > 0
-
-    let removedNames = withAlpmConfig(config, true, handle, dbs, errors):
-      for e in errors: printError(config.color, e)
-      let newInstalledNames = lc[$p.name | (p <- handle.local.packages), string].toSet
-      installed.map(i => i.name).filter(n => not (n in newInstalledNames)).toSet
-
-    let (finalPkgInfos, finalAdditionalPkgInfos) = pkgInfos.foldl(block:
-      let (pkgInfos, additionalPkgInfos) = a
-      if b.name in removedNames:
-        (pkgInfos, additionalPkgInfos & b)
-      else:
-        (pkgInfos & b, additionalPkgInfos),
-      (newSeq[PackageInfo](), additionalPkgInfos))
-
-    let (resolveSuccess, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
-      resolveDependencies(config, finalPkgInfos, finalAdditionalPkgInfos, false, directSome,
-        nodepsCount, assumeInstalled, noaur)
-    let paths = initialPaths & dependencyPaths
-
-    let confirmAndResolveCode = if resolveSuccess:
-        confirmViewAndImportKeys(config, basePackages, installed, noconfirm)
-      else:
-        1
-
-    if confirmAndResolveCode != 0:
-      clearPaths(paths)
-      confirmAndResolveCode
-    else:
-      let (_, initialUnrequired, initialUnrequiredWithoutOptional, _) =
-        withAlpmConfig(config, false, handle, dbs, errors):
-        queryUnrequired(handle, true, true, keepNames)
-
-      let (additionalCode, additionalSome) = if additionalPacmanTargets.len > 0: (block:
-          printColon(config.color, tr"Installing build dependencies...")
-
-          (pacmanRun(true, config.color, commonArgs &
-            ("S", none(string), ArgumentType.short) &
-            ("needed", none(string), ArgumentType.long) &
-            ("asdeps", none(string), ArgumentType.long) &
-            additionalPacmanTargets.map(t => (t, none(string), ArgumentType.target))), true))
-        else:
-          (0, false)
-
-      if additionalCode != 0:
-        clearPaths(paths)
-        additionalCode
-      else:
-        if basePackages.len > 0:
-          # check all pacman dependencies were installed
-          let unsatisfied = if nodepsCount <= 1:
-              withAlpmConfig(config, true, handle, dbs, errors):
-                for e in errors: printError(config.color, e)
-
-                proc checkSatisfied(reference: PackageReference): bool =
-                  for pkg in handle.local.packages:
-                    if reference.isProvidedBy(pkg.toPackageReference, nodepsCount == 0):
-                      return true
-                    for provides in pkg.provides:
-                      if reference.isProvidedBy(provides.toPackageReference, nodepsCount == 0):
-                        return true
-                  return false
-
-                lc[x.key | (x <- satisfied.namedPairs, not x.value.installed and
-                  x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
-            else:
-              @[]
-
-          if unsatisfied.len > 0:
-            clearPaths(paths)
-            printUnsatisfied(config, satisfied, unsatisfied)
-            1
-          else:
-            proc installNext(index: int, installedAs: List[(string, string)],
-              lastCode: int): (Table[string, string], int, int) =
-              if index < basePackages.len and lastCode == 0:
-                let (addInstalledAs, code) = installGroupFromSources(config, commonArgs,
-                  basePackages[index], explicits, skipDeps, noconfirm)
-                installNext(index + 1, addInstalledAs ^& installedAs, code)
-              else:
-                (toSeq(installedAs.items).toTable, lastCode, index - 1)
-
-            let (installedAs, code, index) = installNext(0, nil, 0)
-            if code != 0 and index < basePackages.len - 1:
-              printWarning(config.color, tr"installation aborted")
-            clearPaths(paths)
-
-            let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
-            let (_, finalUnrequired, finalUnrequiredWithoutOptional, _) =
-              withAlpmConfig(config, false, handle, dbs, errors):
-              queryUnrequired(handle, true, true, newKeepNames)
-
-            let unrequired = finalUnrequired - initialUnrequired
-            let unrequiredOptional = finalUnrequiredWithoutOptional -
-              initialUnrequiredWithoutOptional - unrequired
-
-            let removeCode = removeBuildDependencies(config,
-              commonArgs, unrequired, unrequiredOptional)
-            if removeCode != 0:
-              removeCode
-            else:
-              code
-        else:
-          if not directSome and not additionalSome:
-            echo(trp(" there is nothing to do\n"))
-          clearPaths(paths)
-          0
-
-proc handlePrint(args: seq[Argument], config: Config, printFormat: string,
-  upgradeCount: int, nodepsCount: int, pacmanTargets: seq[FullPackageTarget],
-  pkgInfos: seq[PackageInfo], additionalPkgInfos: seq[PackageInfo], noaur: bool): int =
-  let directPacmanTargets = pacmanTargets.map(`$`)
-
-  let (resolveSuccess, _, additionalPacmanTargets, basePackages, _) =
-    resolveDependencies(config, pkgInfos, additionalPkgInfos, true, false,
-      nodepsCount, args.assumeInstalled, noaur)
-
-  let code = if directPacmanTargets.len > 0 or
-    additionalPacmanTargets.len > 0 or upgradeCount > 0: (block:
-      let callPacmanTargets = if resolveSuccess:
-          directPacmanTargets & additionalPacmanTargets
-        else:
-          directPacmanTargets
-
-      # workaround for a strange nim bug, callPacmanTargets.map(...) breaks main.nim
-      var callArguments = newSeq[Argument]()
-      for t in callPacmanTargets:
-        callArguments &= (t, none(string), ArgumentType.target)
-
-      let code = pacmanRun(false, config.color,
-        args.filter(arg => not arg.isTarget) & callArguments)
-
-      if resolveSuccess:
-        code
-      else:
-        1)
-    else:
-      0
-
-  if code == 0:
-    proc printWithFormat(pkgInfo: PackageInfo) =
-      echo(printFormat
-        .replace("%n", pkgInfo.name)
-        .replace("%v", pkgInfo.version)
-        .replace("%r", config.aurRepo)
-        .replace("%s", "0")
-        .replace("%l", pkgInfo.gitUrl))
-
-    for installGroup in basePackages:
-      for pkgInfos in installGroup:
-        for pkgInfo in pkgInfos:
-          printWithFormat(pkgInfo)
-    0
-  else:
-    code
-
 proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[RpcPackageInfo],
   pkgInfos: seq[PackageInfo], acceptedPkgInfos: seq[PackageInfo], upToDateNeeded: seq[Installed],
   buildUpToDateNeeded: seq[(string, string)], localIsNewerSeq: seq[LocalIsNewer],
@@ -1028,7 +840,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
   if upgradeCount > 0 and not noaur and config.printAurNotFound:
     let rpcInfoTable = rpcInfos.map(i => (i.name, i)).toTable
     for inst in installed:
-      if inst.foreignUpgrade and not config.ignored(inst.name, inst.groups) and
+      if inst.foreign and not config.ignored(inst.name, inst.groups) and
         not rpcInfoTable.hasKey(inst.name):
         printWarning(config.color, tr"$# was not found in AUR" % [inst.name])
 
@@ -1221,158 +1033,145 @@ proc obtainPacmanBuildTargets(config: Config, pacmanTargets: seq[FullPackageTarg
 
   (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths, obtainErrorMessages)
 
-proc findSyncTargetsWithInstalled(config: Config, targets: seq[PackageTarget], upgradeCount: int,
-  noaur: bool, build: bool): (seq[SyncPackageTarget], seq[string], seq[Installed]) =
+proc obtainInstalledWithAur(config: Config,
+  rpcAurTargets: seq[FullPackageTarget[RpcPackageInfo]]): (seq[Installed], seq[string]) =
   withAlpmConfig(config, true, handle, dbs, errors):
     for e in errors: printError(config.color, e)
 
-    let (syncTargets, checkAurNames) = findSyncTargets(handle, dbs, targets, config.aurRepo,
-      not build, not build)
-
-    proc checkReplaceable(name: string): bool =
-      for db in dbs:
-        for pkg in db.packages:
-          for replaces in pkg.replaces:
-            if replaces.name == name:
-              return true
-      return false
-
     proc createInstalled(package: ptr AlpmPackage): Installed =
       let foreign = dbs.filter(d => d[package.name] != nil).len == 0
-      let foreignUpgrade = foreign and (upgradeCount == 0 or not checkReplaceable($package.name))
-
       ($package.name, $package.version, package.groupsSeq,
-        package.reason == AlpmReason.explicit, foreign, foreignUpgrade)
+        package.reason == AlpmReason.explicit, foreign)
 
     let installed = lc[createInstalled(p) | (p <- handle.local.packages), Installed]
+    let checkAurUpgradeNames = installed
+      .filter(i => i.foreign and (config.checkIgnored or not config.ignored(i.name, i.groups)))
+      .map(i => i.name)
 
-    let checkAurNamesFull = if noaur:
-      @[]
-    elif upgradeCount > 0: (block:
-      let foreignUpgrade = installed
-        .filter(i => i.foreignUpgrade)
-        .map(i => i.name)
-        .toSet
+    (installed, checkAurUpgradeNames)
 
-      installed
-        .filter(i => i.name in foreignUpgrade and
-          (config.checkIgnored or not config.ignored(i.name, i.groups)))
-        .map(i => i.name) & checkAurNames)
-    else:
-      checkAurNames
-
-    (syncTargets, checkAurNamesFull, installed)
-
-proc resolveBuildTargets(config: Config, targets: seq[PackageTarget],
+proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
+  rpcFullTargets: seq[FullPackageTarget[RpcPackageInfo]], printHeader: bool,
   printMode: bool, upgradeCount: int, noconfirm: bool, needed: bool, noaur: bool, build: bool):
-  (int, seq[Installed], HashSet[string], seq[FullPackageTarget[PackageInfo]],
-  seq[PackageInfo], seq[PackageInfo], seq[string]) =
-  template errorResult: untyped = (1, newSeq[Installed](),
-    initSet[string](), newSeq[FullPackageTarget[PackageInfo]](),
+  (int, seq[Installed], HashSet[string], seq[PackageInfo], seq[PackageInfo], seq[string]) =
+  template errorResult: untyped = (1, newSeq[Installed](), initSet[string](),
     newSeq[PackageInfo](), newSeq[PackageInfo](), newSeq[string]())
 
-  let (syncTargets, checkAurNames, installed) =
-    findSyncTargetsWithInstalled(config, targets, upgradeCount, noaur, build)
+  let (installed, checkAurUpgradeNames) = obtainInstalledWithAur(config, rpcFullTargets)
+  let checkAur = not noaur and checkAurUpgradeNames.len > 0 and upgradeCount > 0
 
-  if not printMode and (checkAurNames.len > 0 or build):
+  if not printMode and (checkAur or build) and printHeader:
     printColon(config.color, tr"Resolving build targets...")
-    if checkAurNames.len > 0:
-      echo(tr"checking AUR database...")
 
-  let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurNames,
-    config.aurRepo, config.downloadTimeout)
-  for e in rerrors: printError(config.color, e)
+  let upgradeRpcInfos = if checkAur: (block:
+      if not printMode:
+        echo(tr"checking AUR database for upgrades...")
+      let (upgradeRpcInfos, rerrors) = getRpcPackageInfos(checkAurUpgradeNames,
+        config.aurRepo, config.downloadTimeout)
+      for e in rerrors: printError(config.color, e)
+      upgradeRpcInfos)
+    else:
+      @[]
 
-  let rpcNotFoundTargets = filterNotFoundSyncTargets(syncTargets,
-    rpcInfos, initTable[string, PackageReference](), config.aurRepo)
+  let installedTable = installed.map(i => (i.name, i)).toTable
+  let rpcAurTargets = rpcFullTargets.filter(t => t.isAurTargetFull(config.aurRepo))
 
-  if rpcNotFoundTargets.len > 0:
-    printSyncNotFound(config, rpcNotFoundTargets)
+  let targetRpcInfos = lc[x | (t <- rpcAurTargets, x <- t.pkgInfo), RpcPackageInfo]
+  let targetRpcInfoNames = targetRpcInfos.map(i => i.name).toSet
+  let rpcInfos = targetRpcInfos & upgradeRpcInfos.filter(i => not (i.name in targetRpcInfoNames))
+
+  let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
+    obtainAurPackageInfos(config, rpcInfos, rpcAurTargets, installedTable,
+      printMode, needed, upgradeCount)
+  for e in aperrors: printError(config.color, e)
+
+  let upToDateNeededTable: Table[string, PackageReference] = upToDateNeeded.map(i => (i.name,
+    (i.name, none(string), some((ConstraintOperation.eq, i.version, false))))).toTable
+  let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
+    aurPkgInfos, upToDateNeededTable, config.aurRepo)
+
+  if notFoundTargets.len > 0:
+    clearPaths(aurPaths)
+    printSyncNotFound(config, notFoundTargets)
     errorResult
   else:
-    let installedTable = installed.map(i => (i.name, i)).toTable
-    let rpcAurTargets = mapAurTargets(syncTargets, rpcInfos, config.aurRepo)
-      .filter(t => t.isAurTargetFull(config.aurRepo))
+    let fullTargets = mapAurTargets(syncTargets
+      .filter(t => not (upToDateNeededTable.opt(t.reference.name)
+      .map(r => t.reference.isProvidedBy(r, true)).get(false))), aurPkgInfos, config.aurRepo)
+    let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
+    let aurTargets = fullTargets.filter(t => isAurTargetFull(t, config.aurRepo))
 
-    let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
-      obtainAurPackageInfos(config, rpcInfos, rpcAurTargets, installedTable,
-        printMode, needed, upgradeCount)
-    for e in aperrors: printError(config.color, e)
+    let (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths,
+      obtainBuildErrorMessages) = obtainPacmanBuildTargets(config, pacmanTargets, installedTable,
+      printMode, needed, build)
 
-    let upToDateNeededTable: Table[string, PackageReference] = upToDateNeeded.map(i => (i.name,
-      (i.name, none(string), some((ConstraintOperation.eq, i.version, false))))).toTable
-    let notFoundTargets = filterNotFoundSyncTargets(syncTargets,
-      aurPkgInfos, upToDateNeededTable, config.aurRepo)
-
-    if notFoundTargets.len > 0:
+    if checkPacmanBuildPkgInfos and buildPkgInfos.len < pacmanTargets.len:
+      clearPaths(buildPaths)
       clearPaths(aurPaths)
-      printSyncNotFound(config, notFoundTargets)
+      for e in obtainBuildErrorMessages: printError(config.color, e)
       errorResult
     else:
-      let fullTargets = mapAurTargets(syncTargets
-        .filter(t => not (upToDateNeededTable.opt(t.reference.name)
-        .map(r => t.reference.isProvidedBy(r, true)).get(false))), aurPkgInfos, config.aurRepo)
-      let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
-      let aurTargets = fullTargets.filter(t => isAurTargetFull(t, config.aurRepo))
+      let pkgInfos = (buildPkgInfos & aurPkgInfos)
+        .deduplicatePkgInfos(config, not printMode)
+      let targetNamesSet = (pacmanTargets & aurTargets).map(t => t.reference.name).toSet
+      let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
+        targetNamesSet, installedTable, printMode, noconfirm)
 
-      let (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths,
-        obtainBuildErrorMessages) = obtainPacmanBuildTargets(config, pacmanTargets, installedTable,
-        printMode, needed, build)
+      if not printMode:
+        printAllWarnings(config, installed, rpcInfos,
+          pkgInfos, acceptedPkgInfos, upToDateNeeded, buildUpToDateNeeded,
+          localIsNewerSeq, targetNamesSet, upgradeCount, noaur)
 
-      if checkPacmanBuildPkgInfos and buildPkgInfos.len < pacmanTargets.len:
-        # "--build" conflicts with "--sysupgrade", so it's ok to fail here
-        clearPaths(buildPaths)
-        clearPaths(aurPaths)
-        for e in obtainBuildErrorMessages: printError(config.color, e)
-        errorResult
-      else:
-        let pkgInfos = (buildPkgInfos & aurPkgInfos)
-          .deduplicatePkgInfos(config, not printMode)
-        let targetNamesSet = (pacmanTargets & aurTargets).map(t => t.reference.name).toSet
-        let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
-          targetNamesSet, installedTable, printMode, noconfirm)
+      (0, installed, targetNamesSet, finalPkgInfos, additionalPkgInfos, buildPaths & aurPaths)
 
-        if not printMode:
-          printAllWarnings(config, installed, rpcInfos,
-            pkgInfos, acceptedPkgInfos, upToDateNeeded, buildUpToDateNeeded,
-            localIsNewerSeq, targetNamesSet, upgradeCount, noaur)
+proc assumeInstalled(args: seq[Argument]): seq[PackageReference] =
+  args
+    .filter(a => a.matchOption(%%%"assume-installed"))
+    .map(a => a.value.get.parsePackageReference(false))
+    .filter(r => r.constraint.isNone or
+      r.constraint.unsafeGet.operation == ConstraintOperation.eq)
 
-        (0, installed, targetNamesSet, pacmanTargets,
-          finalPkgInfos, additionalPkgInfos, buildPaths & aurPaths)
+proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPackageTarget],
+  rpcFullTargets: seq[FullPackageTarget[RpcPackageInfo]], upgradeCount: int, nodepsCount: int,
+  wrapUpgrade: bool, noconfirm: bool, needed: bool, build: bool, noaur: bool): int =
+  let pacmanTargets = rpcFullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
 
-proc handleSyncInstall*(args: seq[Argument], config: Config): int =
-  let (refreshCode, callArgs) = checkAndRefresh(config.color, args)
-  if refreshCode != 0:
-    refreshCode
+  let workDirectPacmanTargets = if build: @[] else: pacmanTargets.map(`$`)
+
+  # check for sysupgrade instead of upgradeCount since upgrade could be done before
+  # and then removed from the list of arguments
+  let (directCode, directSome) = if workDirectPacmanTargets.len > 0 or args.check(%%%"sysupgrade"):
+      (pacmanRun(true, config.color, args.filter(arg => not arg.isTarget) &
+        workDirectPacmanTargets.map(t => (t, none(string), ArgumentType.target))), true)
+    else:
+      (0, false)
+
+  if directCode != 0:
+    directCode
   else:
-    let upgradeCount = args.count(%%%"sysupgrade")
-    let nodepsCount = args.count(%%%"nodeps")
-    let needed = args.check(%%%"needed")
-    let noaur = args.check(%%%"noaur")
-    let build = args.check(%%%"build")
+    let (resolveTargetsCode, installed, targetNamesSet, pkgInfos, additionalPkgInfos,
+      initialPaths) = resolveBuildTargets(config, syncTargets, rpcFullTargets,
+      directSome or wrapUpgrade, false, upgradeCount, noconfirm, needed, noaur, build)
 
-    let printModeArg = args.check(%%%"print")
-    let printModeFormat = args.filter(arg => arg.matchOption(%%%"print-format")).optLast
-    let printFormat = if printModeArg or printModeFormat.isSome:
-        some(printModeFormat.map(arg => arg.value.get).get("%l"))
-      else:
-        none(string)
+    if resolveTargetsCode != 0:
+      resolveTargetsCode
+    else:
+      let assumeInstalled = args.assumeInstalled
+      let skipDeps = assumeInstalled.len > 0 or nodepsCount > 0
 
-    let noconfirm = args.noconfirm
-    let targets = args.packageTargets(false)
+      let (resolveSuccess, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
+        resolveDependencies(config, pkgInfos, additionalPkgInfos, false,
+          nodepsCount, assumeInstalled, noaur)
 
-    withAur():
-      let (code, installed, targetNamesSet, pacmanTargets,
-        pkgInfos, additionalPkgInfos, paths) = resolveBuildTargets(config, targets,
-        printFormat.isSome, upgradeCount, noconfirm, needed, noaur, build)
+      let confirmAndResolveCode = if resolveSuccess:
+          confirmViewAndImportKeys(config, basePackages, installed, noconfirm)
+        else:
+          1
 
-      let pacmanArgs = callArgs.filterExtensions(true, true,
-        commonOptions, transactionOptions, upgradeOptions, syncOptions)
-      if code != 0:
-        code
-      elif printFormat.isSome:
-        handlePrint(pacmanArgs, config, printFormat.unsafeGet, upgradeCount, nodepsCount,
-          pacmanTargets, pkgInfos, additionalPkgInfos, noaur)
+      let paths = initialPaths & dependencyPaths
+      if confirmAndResolveCode != 0:
+        clearPaths(paths)
+        confirmAndResolveCode
       else:
         let explicitsNamesSet = installed.filter(i => i.explicit).map(i => i.name).toSet
         let depsNamesSet = installed.filter(i => not i.explicit).map(i => i.name).toSet
@@ -1385,6 +1184,211 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
           else:
             explicitsNamesSet + (targetNamesSet - depsNamesSet)
 
-        handleInstall(pacmanArgs, config, upgradeCount, nodepsCount, noconfirm,
-          explicits, installed, pacmanTargets, pkgInfos, additionalPkgInfos, keepNames,
-          paths, build, noaur)
+        let commonArgs = args
+          .keepOnlyOptions(commonOptions, transactionOptions, upgradeOptions)
+          .filter(true, false, %%%"asdeps", %%%"asexplicit", %%%"needed")
+
+        let (_, initialUnrequired, initialUnrequiredWithoutOptional, _) =
+          withAlpmConfig(config, false, handle, dbs, errors):
+          queryUnrequired(handle, true, true, keepNames)
+
+        let additionalCode = if additionalPacmanTargets.len > 0: (block:
+            printColon(config.color, tr"Installing build dependencies...")
+
+            pacmanRun(true, config.color, commonArgs &
+              ("S", none(string), ArgumentType.short) &
+              ("needed", none(string), ArgumentType.long) &
+              ("asdeps", none(string), ArgumentType.long) &
+              additionalPacmanTargets.map(t => (t, none(string), ArgumentType.target))))
+          else:
+            0
+
+        if additionalCode != 0:
+          clearPaths(paths)
+          additionalCode
+        else:
+          if basePackages.len > 0:
+            # check all pacman dependencies were installed
+            let unsatisfied = if nodepsCount <= 1:
+                withAlpmConfig(config, true, handle, dbs, errors):
+                  for e in errors: printError(config.color, e)
+
+                  proc checkSatisfied(reference: PackageReference): bool =
+                    for pkg in handle.local.packages:
+                      if reference.isProvidedBy(pkg.toPackageReference, nodepsCount == 0):
+                        return true
+                      for provides in pkg.provides:
+                        if reference.isProvidedBy(provides.toPackageReference, nodepsCount == 0):
+                          return true
+                    return false
+
+                  lc[x.key | (x <- satisfied.namedPairs, not x.value.installed and
+                    x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
+              else:
+                @[]
+
+            if unsatisfied.len > 0:
+              clearPaths(paths)
+              printUnsatisfied(config, satisfied, unsatisfied)
+              1
+            else:
+              proc installNext(index: int, installedAs: List[(string, string)],
+                lastCode: int): (Table[string, string], int, int) =
+                if index < basePackages.len and lastCode == 0:
+                  let (addInstalledAs, code) = installGroupFromSources(config, commonArgs,
+                    basePackages[index], explicits, skipDeps, noconfirm)
+                  installNext(index + 1, addInstalledAs ^& installedAs, code)
+                else:
+                  (toSeq(installedAs.items).toTable, lastCode, index - 1)
+
+              let (installedAs, code, index) = installNext(0, nil, 0)
+              if code != 0 and index < basePackages.len - 1:
+                printWarning(config.color, tr"installation aborted")
+              clearPaths(paths)
+
+              let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
+              let (_, finalUnrequired, finalUnrequiredWithoutOptional, _) =
+                withAlpmConfig(config, false, handle, dbs, errors):
+                queryUnrequired(handle, true, true, newKeepNames)
+
+              let unrequired = finalUnrequired - initialUnrequired
+              let unrequiredOptional = finalUnrequiredWithoutOptional -
+                initialUnrequiredWithoutOptional - unrequired
+
+              let removeCode = removeBuildDependencies(config,
+                commonArgs, unrequired, unrequiredOptional)
+              if removeCode != 0:
+                removeCode
+              else:
+                code
+          else:
+            let aurTargets = rpcFullTargets.filter(t => isAurTargetFull(t, config.aurRepo))
+            if (not noaur and (aurTargets.len > 0 or upgradeCount > 0)) or build:
+              echo(trp(" there is nothing to do\n"))
+            clearPaths(paths)
+            0
+
+proc handlePrint(args: seq[Argument], config: Config, syncTargets: seq[SyncPackageTarget],
+  rpcFullTargets: seq[FullPackageTarget[RpcPackageInfo]], upgradeCount: int, nodepsCount: int,
+  needed: bool, build: bool, noaur: bool, printFormat: string): int =
+  let pacmanTargets = rpcFullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
+  let directPacmanTargets = pacmanTargets.map(`$`)
+
+  let (resolveTargetsCode, _, _, pkgInfos, additionalPkgInfos, _) = resolveBuildTargets(config,
+    syncTargets, rpcFullTargets, false, true, upgradeCount, true, needed, noaur, build)
+
+  if resolveTargetsCode != 0:
+    resolveTargetsCode
+  else:
+    let (resolveSuccess, _, additionalPacmanTargets, basePackages, _) =
+      resolveDependencies(config, pkgInfos, additionalPkgInfos, true,
+        nodepsCount, args.assumeInstalled, noaur)
+
+    let code = if directPacmanTargets.len > 0 or
+      additionalPacmanTargets.len > 0 or upgradeCount > 0: (block:
+        let callPacmanTargets = if resolveSuccess:
+            directPacmanTargets & additionalPacmanTargets
+          else:
+            directPacmanTargets
+
+        # workaround for a strange nim bug, callPacmanTargets.map(...) breaks main.nim
+        var callArguments = newSeq[Argument]()
+        for t in callPacmanTargets:
+          callArguments &= (t, none(string), ArgumentType.target)
+
+        let code = pacmanRun(false, config.color,
+          args.filter(arg => not arg.isTarget) & callArguments)
+
+        if resolveSuccess:
+          code
+        else:
+          1)
+      else:
+        0
+
+    if code == 0:
+      proc printWithFormat(pkgInfo: PackageInfo) =
+        echo(printFormat
+          .replace("%n", pkgInfo.name)
+          .replace("%v", pkgInfo.version)
+          .replace("%r", config.aurRepo)
+          .replace("%s", "0")
+          .replace("%l", pkgInfo.gitUrl))
+
+      for installGroup in basePackages:
+        for pkgInfos in installGroup:
+          for pkgInfo in pkgInfos:
+            printWithFormat(pkgInfo)
+      0
+    else:
+      code
+
+proc resolveAurTargets(config: Config, targets: seq[PackageTarget], printMode: bool, noaur: bool,
+  build: bool): (int, seq[SyncPackageTarget], seq[FullPackageTarget[RpcPackageInfo]]) =
+  let (syncTargets, checkAurTargetNames) = withAlpmConfig(config, true, handle, dbs, errors):
+    for e in errors: printError(config.color, e)
+    findSyncTargets(handle, dbs, targets, config.aurRepo, not build, not build)
+
+  let rpcInfos = if not noaur and checkAurTargetNames.len > 0: (block:
+      if not printMode:
+        printColon(config.color, tr"Resolving build targets...")
+        echo(tr"checking AUR database for targets...")
+
+      let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurTargetNames,
+        config.aurRepo, config.downloadTimeout)
+      for e in rerrors: printError(config.color, e)
+      rpcInfos)
+    else:
+      @[]
+
+  let rpcNotFoundTargets = filterNotFoundSyncTargets(syncTargets,
+    rpcInfos, initTable[string, PackageReference](), config.aurRepo)
+
+  if rpcNotFoundTargets.len > 0:
+    printSyncNotFound(config, rpcNotFoundTargets)
+    (1, syncTargets, newSeq[FullPackageTarget[RpcPackageInfo]]())
+  else:
+    let rpcFullTargets = mapAurTargets(syncTargets, rpcInfos, config.aurRepo)
+    (0, syncTargets, rpcFullTargets)
+
+proc handleSyncInstall*(args: seq[Argument], config: Config): int =
+  let printModeArg = args.check(%%%"print")
+  let printModeFormat = args.filter(arg => arg.matchOption(%%%"print-format")).optLast
+  let printFormat = if printModeArg or printModeFormat.isSome:
+      some(printModeFormat.map(arg => arg.value.get).get("%l"))
+    else:
+      none(string)
+
+  let targets = args.packageTargets(false)
+  let wrapUpgrade = targets.len == 0
+
+  let (refreshUpgradeCode, callArgs) = if wrapUpgrade and printFormat.isNone:
+      checkAndRefreshUpgrade(config.color, args)
+    else:
+      checkAndRefresh(config.color, args)
+
+  if refreshUpgradeCode != 0:
+    refreshUpgradeCode
+  else:
+    let upgradeCount = args.count(%%%"sysupgrade")
+    let nodepsCount = args.count(%%%"nodeps")
+    let needed = args.check(%%%"needed")
+    let noaur = args.check(%%%"noaur")
+    let build = args.check(%%%"build")
+    let noconfirm = args.noconfirm
+
+    withAur():
+      let (code, syncTargets, rpcFullTargets) = resolveAurTargets(config, targets,
+        printFormat.isSome, noaur, build)
+
+      let pacmanArgs = callArgs.filterExtensions(true, true,
+        commonOptions, transactionOptions, upgradeOptions, syncOptions)
+
+      if code != 0:
+        code
+      elif printFormat.isSome:
+        handlePrint(pacmanArgs, config, syncTargets, rpcFullTargets,
+          upgradeCount, nodepsCount, needed, build, noaur, printFormat.unsafeGet)
+      else:
+        handleInstall(pacmanArgs, config, syncTargets, rpcFullTargets,
+          upgradeCount, nodepsCount, wrapUpgrade, noconfirm, needed, build, noaur)

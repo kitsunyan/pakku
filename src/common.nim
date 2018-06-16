@@ -39,19 +39,31 @@ type
     repo: string
   ]
 
-proc checkAndRefresh*(color: bool, args: seq[Argument]): tuple[code: int, args: seq[Argument]] =
+proc checkAndRefreshUpgradeInternal(color: bool, upgrade: bool, args: seq[Argument]):
+  tuple[code: int, args: seq[Argument]] =
   let refreshCount = args.count(%%%"refresh")
-  if refreshCount > 0:
+  let upgradeCount = if upgrade: args.count(%%%"sysupgrade") else: 0
+  if refreshCount > 0 or upgradeCount > 0:
     let code = pacmanRun(true, color, args
       .keepOnlyOptions(commonOptions, transactionOptions, upgradeOptions) &
       ("S", none(string), ArgumentType.short) &
-      ("y", none(string), ArgumentType.short).repeat(refreshCount))
+      ("y", none(string), ArgumentType.short).repeat(refreshCount) &
+      ("u", none(string), ArgumentType.short).repeat(upgradeCount))
 
     let callArgs = args
-      .filter(arg => not arg.matchOption(%%%"refresh"))
+      .filter(arg => not arg.matchOption(%%%"refresh") and
+        (upgradeCount == 0 or not arg.matchOption(%%%"sysupgrade")))
     (code, callArgs)
   else:
     (0, args)
+
+template checkAndRefreshUpgrade*(color: bool, args: seq[Argument]):
+  tuple[code: int, args: seq[Argument]] =
+  checkAndRefreshUpgradeInternal(color, true, args)
+
+template checkAndRefresh*(color: bool, args: seq[Argument]):
+  tuple[code: int, args: seq[Argument]] =
+  checkAndRefreshUpgradeInternal(color, false, args)
 
 proc noconfirm*(args: seq[Argument]): bool =
   args
