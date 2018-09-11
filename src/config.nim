@@ -64,7 +64,7 @@ proc readConfigFile*(configFile: string):
         var matches: array[2, string]
 
         while true:
-          let line = readLine(file).strip(leading = false, trailing = true)
+          let line = readLine(file).strip(leading = true, trailing = true)
           if line.len > 0 and line[0] != '#':
             if line.match(re"\[(.*)\]", matches):
               currentCategory = matches[0]
@@ -74,10 +74,10 @@ proc readConfigFile*(configFile: string):
                 category = newTable[string, string]()
                 table[currentCategory] = category
             elif currentCategory.len > 0:
-              if line.match(re"\ *(\w+)\ *=\ *(.*)", matches):
+              if line.match(re"(\w+)\ *=\ *(.*)", matches):
                 category[].add(matches[0], matches[1])
               else:
-                category[].add(line.strip(leading = true, trailing = false), "")
+                category[].add(line, "")
 
         false
       except EOFError:
