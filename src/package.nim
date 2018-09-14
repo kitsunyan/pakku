@@ -31,6 +31,7 @@ type
     maintainer*: Option[string]
     firstSubmitted*: Option[int64]
     lastModified*: Option[int64]
+    outOfDate*: Option[int64]
     votes*: int
     popularity*: float
     gitUrl*: string
@@ -312,6 +313,7 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
     maintainer: info.map(i => i.maintainer).flatten,
     firstSubmitted: info.map(i => i.firstSubmitted).flatten,
     lastModified: info.map(i => i.lastModified).flatten,
+    outOfDate: info.map(i => i.outOfDate).flatten,
     votes: info.map(i => i.votes).get(0),
     popularity: info.map(i => i.popularity).get(0),
     gitUrl: gitUrl, gitSubdir: gitSubdir) |

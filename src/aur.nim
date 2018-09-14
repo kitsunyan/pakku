@@ -29,13 +29,14 @@ proc parseRpcPackageInfo(obj: JsonNode, repo: string): Option[RpcPackageInfo] =
   let maintainer = if maintainerEmpty.len > 0: some(maintainerEmpty) else: none(string)
   let firstSubmitted = obj["FirstSubmitted"].getBiggestInt(0).optInt64
   let lastModified = obj["LastModified"].getBiggestInt(0).optInt64
+  let outOfDate = obj["OutOfDate"].getBiggestInt(0).optInt64
   let votes = (int) obj["NumVotes"].getBiggestInt(0)
   let popularity = obj["Popularity"].getFloat(0)
 
   if base.len > 0 and name.len > 0:
     some(RpcPackageInfo(repo: repo, base: base, name: name, version: version,
       description: description, maintainer: maintainer,
-      firstSubmitted: firstSubmitted, lastModified: lastModified,
+      firstSubmitted: firstSubmitted, lastModified: lastModified, outOfDate: outOfDate,
       votes: votes, popularity: popularity, gitUrl: gitUrl(base), gitSubdir: none(string)))
   else:
     none(RpcPackageInfo)

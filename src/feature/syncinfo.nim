@@ -48,16 +48,13 @@ proc formatDeps(title: string, config: Config,
   else:
     (title, @[], false)
 
-proc formatDate(date: Option[int64]): seq[string] =
-  if date.isSome:
-    var time = (posix.Time) date.unsafeGet
-    var ltime: Tm
-    discard localtime_r(time, ltime)
-    var buffer: array[100, char]
-    let res = strftime(addr(buffer), buffer.len, "%c", ltime)
-    if res > 0: @[buffer.toString(none(int))] else: @[]
-  else:
-    @[]
+proc formatDate(date: int64): Option[string] =
+  var time = (posix.Time) date
+  var ltime: Tm
+  discard localtime_r(time, ltime)
+  var buffer: array[100, char]
+  let res = strftime(addr(buffer), buffer.len, "%c", ltime)
+  if res > 0: some(buffer.toString(none(int))) else: none(string)
 
 proc handleTarget(config: Config, padding: int, args: seq[Argument],
   target: FullPackageTarget[PackageInfo]): int =
@@ -80,8 +77,9 @@ proc handleTarget(config: Config, padding: int, args: seq[Argument],
         formatDeps(trp"Conflicts With", config, pkgInfo.conflicts),
         formatDeps(trp"Replaces", config, pkgInfo.replaces),
         (tr"Maintainer", toSeq(pkgInfo.maintainer.items()), false),
-        (tr"First Submitted", pkgInfo.firstSubmitted.formatDate, false),
-        (tr"Last Modified", pkgInfo.lastModified.formatDate, false),
+        (tr"First Submitted", toSeq(pkgInfo.firstSubmitted.map(formatDate).flatten.items()), false),
+        (tr"Last Modified", toSeq(pkgInfo.lastModified.map(formatDate).flatten.items()), false),
+        (tr"Out Of Date", toSeq(pkgInfo.outOfDate.map(formatDate).flatten.items()), false),
         (tr"Rating", @[formatPkgRating(pkgInfo.votes, pkgInfo.popularity)], false))
 
       0
