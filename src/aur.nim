@@ -57,22 +57,24 @@ proc obtainPkgBaseSrcInfo(base: string, useTimeout: bool): (string, Option[strin
 
 proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool):
   (seq[RpcPackageInfo], Option[string]) =
-  if pkgs.len == 0:
+  let dpkgs = pkgs.deduplicate
+  if dpkgs.len == 0:
     (@[], none(string))
   else:
+    const maxCount = 100
+    let distributed = dpkgs.distribute((dpkgs.len + maxCount - 1) /% maxCount)
     withAur():
       try:
-        withCurl(instance):
-          let url = aurUrl & "rpc/?v=5&type=info&arg[]=" & @pkgs
-            .deduplicate
-            .map(u => instance.escape(u))
-            .foldl(a & "&arg[]=" & b)
+        let responses = distributed.map(pkgs => (block:
+          withCurl(instance):
+            let url = aurUrl & "rpc/?v=5&type=info&arg[]=" & @pkgs
+              .map(u => instance.escape(u))
+              .foldl(a & "&arg[]=" & b)
+            performString(url, useTimeout)))
 
-          let response = performString(url, useTimeout)
-          let results = parseJson(response)["results"]
-          let table = lc[(x.name, x) | (y <- results, x <- parseRpcPackageInfo(y, repo)),
-            (string, RpcPackageInfo)].toTable
-          (lc[x | (p <- pkgs, x <- table.opt(p)), RpcPackageInfo], none(string))
+        let table = lc[(x.name, x) | (z <- responses, y <- parseJson(z)["results"],
+          x <- parseRpcPackageInfo(y, repo)), (string, RpcPackageInfo)].toTable
+        (lc[x | (p <- pkgs, x <- table.opt(p)), RpcPackageInfo], none(string))
       except CurlError:
         (@[], some(getCurrentException().msg))
       except JsonParsingError:
