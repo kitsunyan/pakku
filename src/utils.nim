@@ -246,7 +246,7 @@ let initialUser* = try:
       none(string)
 
   let uid = uidString.get.parseInt
-  if uid == 0: none(User) else: some(getUser(uid))
+  if uid == 0 or currentUser.uid != 0: none(User) else: some(getUser(uid))
 except:
   none(User)
 
