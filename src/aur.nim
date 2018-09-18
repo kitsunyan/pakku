@@ -129,7 +129,7 @@ proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
     withAur():
       try:
         withCurl(instance):
-          let url = aurUrl & "rpc/?v=5&type=search&by=name&arg=" &
+          let url = aurUrl & "rpc/?v=5&type=search&by=name-desc&arg=" &
             instance.escape(query[0])
 
           let response = performString(url, useTimeout)
