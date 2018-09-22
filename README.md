@@ -1,6 +1,7 @@
 # pakku
 
 Pakku is a pacman wrapper with additional features, such as AUR support.
+Stable release is available in [AUR](https://aur.archlinux.org/packages/pakku).
 
 ## Description
 
