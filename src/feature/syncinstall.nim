@@ -818,8 +818,7 @@ proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
         printColon(config.color, tr"Removing build dependencies...")
         pacmanRun(true, config.color, removeArgs &
           ("R", none(string), ArgumentType.short) &
-          toSeq(unrequired.items).map(t =>
-            (t, none(string), ArgumentType.target))))
+          toSeq(unrequired.items).map(t => (t, none(string), ArgumentType.target))))
       else:
         0
 
@@ -827,8 +826,7 @@ proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
       printColon(config.color, tr"Removing optional build dependencies...")
       pacmanRun(true, config.color, removeArgs &
         ("R", none(string), ArgumentType.short) &
-        toSeq(unrequiredOptional.items).map(t =>
-          (t, none(string), ArgumentType.target)))
+        toSeq(unrequiredOptional.items).map(t => (t, none(string), ArgumentType.target)))
     else:
       code)
   else:
@@ -941,7 +939,7 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   printMode: bool, needed: bool, upgradeCount: int): (seq[PackageInfo], seq[PackageInfo],
   seq[string], seq[Installed], seq[LocalIsNewer], seq[string]) =
   let targetRpcInfoPairs: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
-    rpcAurTargets.map(t => t.rpcInfo.get).map(i => (i, installed
+    rpcAurTargets.map(f => f.rpcInfo.get).map(i => (i, installed
       .checkNeeded(i.name, i.version, true).needed))
 
   let upToDateNeeded: seq[Installed] = if needed:
@@ -957,7 +955,7 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
 
   let installedUpgradeRpcInfos = rpcInfos.filter(i => upgradeCount > 0 and (block:
     let reference = i.toPackageReference
-    rpcAurTargets.filter(t => t.reference.isProvidedBy(reference, true)).len == 0))
+    rpcAurTargets.filter(f => f.sync.target.reference.isProvidedBy(reference, true)).len == 0))
 
   let upgradeStructs: seq[tuple[rpcInfo: RpcPackageInfo, needed: bool,
     localIsNewer: Option[LocalIsNewer]]] = installedUpgradeRpcInfos
@@ -1003,21 +1001,21 @@ proc obtainPacmanBuildTargets(config: Config, pacmanTargets: seq[FullPackageTarg
   (bool, seq[PackageInfo], seq[(string, string)], seq[string], seq[string]) =
   let (neededPacmanBuildTargets, buildUpToDateNeeded) = if not printMode and
     build and needed: (block:
-      let neededPairs: seq[tuple[target: FullPackageTarget,
-        skipVersion: Option[string]]] = pacmanTargets.map(target => (block:
-        let version = target.foundInfos[0].pkg.get.version
-        if installedTable.checkNeeded(target.reference.name, version, true).needed:
-          (target, none(string))
+      let neededPairs: seq[tuple[full: FullPackageTarget,
+        skipVersion: Option[string]]] = pacmanTargets.map(full => (block:
+        let version = full.sync.foundInfos[0].pkg.get.version
+        if installedTable.checkNeeded(full.sync.target.reference.name, version, true).needed:
+          (full, none(string))
         else:
-          (target, some(version))))
+          (full, some(version))))
 
       let neededPacmanBuildTargets = neededPairs
         .filter(p => p.skipVersion.isNone)
-        .map(p => p.target)
+        .map(p => p.full)
 
       let buildUpToDateNeeded = neededPairs
         .filter(p => p.skipVersion.isSome)
-        .map(p => (p.target.reference.name, p.skipVersion.unsafeGet))
+        .map(p => (p.full.sync.target.reference.name, p.skipVersion.unsafeGet))
 
       (neededPacmanBuildTargets, buildUpToDateNeeded))
     else:
@@ -1076,7 +1074,7 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
       @[]
 
   let installedTable = installed.map(i => (i.name, i)).toTable
-  let rpcAurTargets = fullTargets.filter(t => t.isAurTargetFull(config.aurRepo))
+  let rpcAurTargets = fullTargets.filter(f => f.isAurTargetFull(config.aurRepo))
 
   let targetRpcInfos = lc[x | (t <- rpcAurTargets, x <- t.rpcInfo), RpcPackageInfo]
   let targetRpcInfoNames = targetRpcInfos.map(i => i.name).toSet
@@ -1098,11 +1096,11 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
     errorResult
   else:
     let fullTargets = mapAurTargets(syncTargets
-      .filter(t => not (upToDateNeededTable.opt(t.reference.name)
-      .map(r => t.reference.isProvidedBy(r, true)).get(false))),
+      .filter(s => not (upToDateNeededTable.opt(s.target.reference.name)
+      .map(r => s.target.reference.isProvidedBy(r, true)).get(false))),
       aurPkgInfos.map(p => p.rpc), config.aurRepo)
-    let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
-    let aurTargets = fullTargets.filter(t => isAurTargetFull(t, config.aurRepo))
+    let pacmanTargets = fullTargets.filter(f => not f.isAurTargetFull(config.aurRepo))
+    let aurTargets = fullTargets.filter(f => f.isAurTargetFull(config.aurRepo))
 
     let (checkPacmanBuildPkgInfos, buildPkgInfos, buildUpToDateNeeded, buildPaths,
       obtainBuildErrorMessages) = obtainPacmanBuildTargets(config, pacmanTargets, installedTable,
@@ -1116,7 +1114,7 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
     else:
       let pkgInfos = (buildPkgInfos & aurPkgInfos)
         .deduplicatePkgInfos(config, not printMode)
-      let targetNamesSet = (pacmanTargets & aurTargets).map(t => t.reference.name).toSet
+      let targetNamesSet = (pacmanTargets & aurTargets).map(f => f.sync.target.reference.name).toSet
       let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
         targetNamesSet, installedTable, printMode, noconfirm)
 
@@ -1137,9 +1135,9 @@ proc assumeInstalled(args: seq[Argument]): seq[PackageReference] =
 proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPackageTarget],
   fullTargets: seq[FullPackageTarget], upgradeCount: int, nodepsCount: int,
   wrapUpgrade: bool, noconfirm: bool, needed: bool, build: bool, noaur: bool): int =
-  let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
+  let pacmanTargets = fullTargets.filter(f => not f.isAurTargetFull(config.aurRepo))
 
-  let workDirectPacmanTargets = if build: @[] else: pacmanTargets.map(`$`)
+  let workDirectPacmanTargets = if build: @[] else: pacmanTargets.map(f => $f.sync.target)
 
   # check for sysupgrade instead of upgradeCount since upgrade could be done before
   # and then removed from the list of arguments
@@ -1265,7 +1263,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
               else:
                 code
           else:
-            let aurTargets = fullTargets.filter(t => isAurTargetFull(t, config.aurRepo))
+            let aurTargets = fullTargets.filter(f => f.isAurTargetFull(config.aurRepo))
             if (not noaur and (aurTargets.len > 0 or upgradeCount > 0)) or build:
               echo(trp(" there is nothing to do\n"))
             clearPaths(paths)
@@ -1274,8 +1272,8 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
 proc handlePrint(args: seq[Argument], config: Config, syncTargets: seq[SyncPackageTarget],
   fullTargets: seq[FullPackageTarget], upgradeCount: int, nodepsCount: int,
   needed: bool, build: bool, noaur: bool, printFormat: string): int =
-  let pacmanTargets = fullTargets.filter(t => not isAurTargetFull(t, config.aurRepo))
-  let directPacmanTargets = pacmanTargets.map(`$`)
+  let pacmanTargets = fullTargets.filter(f => not f.isAurTargetFull(config.aurRepo))
+  let directPacmanTargets = pacmanTargets.map(f => $f.sync.target)
 
   let (resolveTargetsCode, _, _, pkgInfos, additionalPkgInfos, _) = resolveBuildTargets(config,
     syncTargets, fullTargets, false, true, upgradeCount, true, needed, noaur, build)

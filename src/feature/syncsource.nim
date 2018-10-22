@@ -117,17 +117,16 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
       if rpcInfo.base in bases:
         a
       else:
-        a & (rpcInfo.base, rpcInfo.version, b.destination.get(rpcInfo.base),
+        a & (rpcInfo.base, rpcInfo.version, b.sync.target.destination.get(rpcInfo.base),
           some(rpcInfo.gitUrl), none(GitRepo))
     else:
-      let foundInfo = b.foundInfos[0]
+      let foundInfo = b.sync.foundInfos[0]
       let pkg = foundInfo.pkg.get
       if pkg.base in bases:
         a
       else:
         let git = lookupGitRepo(foundInfo.repo, pkg.base, pkg.arch.get)
-        a & (pkg.base, pkg.version, b.destination.get(pkg.base),
-          none(string), git),
+        a & (pkg.base, pkg.version, b.sync.target.destination.get(pkg.base), none(string), git),
     newSeq[BaseTarget]())
 
   let (update, terminate) = if quiet:

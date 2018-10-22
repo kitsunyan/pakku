@@ -57,9 +57,9 @@ proc formatDate(date: int64): Option[string] =
   if res > 0: some(buffer.toString(none(int))) else: none(string)
 
 proc handleTarget(config: Config, padding: int, args: seq[Argument],
-  target: FullPackageTarget, pkgInfoOption: Option[PackageInfo]): int =
-  if target.foundInfos.len > 0:
-    if isAurTargetFull(target, config.aurRepo):
+  full: FullPackageTarget, pkgInfoOption: Option[PackageInfo]): int =
+  if full.sync.foundInfos.len > 0:
+    if full.isAurTargetFull(config.aurRepo):
       let pkgInfo = pkgInfoOption.get
 
       printPackageInfo(padding, config.color,
@@ -86,19 +86,19 @@ proc handleTarget(config: Config, padding: int, args: seq[Argument],
         (tr"Rating", @[formatPkgRating(pkgInfo.rpc.votes, pkgInfo.rpc.popularity)], false))
 
       0
-    elif target.reference.constraint.isSome:
+    elif full.sync.target.reference.constraint.isSome:
       # pacman doesn't support constraints for --info queries
-      pacmanRun(false, config.color, args & target.foundInfos.map(i =>
-        (i.repo & "/" & target.reference.name, none(string), ArgumentType.target)))
+      pacmanRun(false, config.color, args & full.sync.foundInfos.map(i =>
+        (i.repo & "/" & full.sync.target.reference.name, none(string), ArgumentType.target)))
     else:
       pacmanRun(false, config.color, args &
-        ($target, none(string), ArgumentType.target))
+        ($full.sync.target, none(string), ArgumentType.target))
   else:
-    if target.repo == some(config.aurRepo):
-      printError(config.color, trp("package '%s' was not found\n") % [$target])
+    if full.sync.target.repo == some(config.aurRepo):
+      printError(config.color, trp("package '%s' was not found\n") % [$full.sync.target])
       1
     else:
-      pacmanRun(false, config.color, args & ($target, none(string), ArgumentType.target))
+      pacmanRun(false, config.color, args & ($full.sync.target, none(string), ArgumentType.target))
 
 proc handleSyncInfo*(args: seq[Argument], config: Config): int =
   let (refreshCode, callArgs) = checkAndRefresh(config.color, args)
@@ -118,8 +118,9 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
     let fullTargets = mapAurTargets(syncTargets, pkgInfos.map(p => p.rpc), config.aurRepo)
 
     let code = min(aerrors.len, 1)
-    if fullTargets.filter(t => isAurTargetFull(t, config.aurRepo) or
-      t.repo == some(config.aurRepo) or t.reference.constraint.isSome).len == 0:
+    if fullTargets.filter(f => f.isAurTargetFull(config.aurRepo) or
+      f.sync.target.repo == some(config.aurRepo) or
+      f.sync.target.reference.constraint.isSome).len == 0:
       if code == 0:
         pacmanExec(false, config.color, callArgs)
       else:
