@@ -13,45 +13,50 @@ type
     user = "User",
     disabled = "Disabled"
 
-  CommonConfig* = object of RootObj
-    dbs*: seq[string]
-    arch*: string
-    debug*: bool
-    progressBar*: bool
-    verbosePkgList*: bool
-    downloadTimeout*: bool
-    pgpKeyserver*: Option[string]
-    defaultRoot*: bool
-    ignorePkgs*: HashSet[string]
-    ignoreGroups*: HashSet[string]
+  CommonConfig* = tuple[
+    dbs: seq[string],
+    arch: string,
+    debug: bool,
+    progressBar: bool,
+    verbosePkgLists: bool,
+    downloadTimeout: bool,
+    pgpKeyserver: Option[string],
+    defaultRoot: bool,
+    ignorePkgs: HashSet[string],
+    ignoreGroups: HashSet[string]
+  ]
 
-  PacmanConfig* = object of CommonConfig
-    sysrootOption*: Option[string]
-    rootRelOption*: Option[string]
-    dbRelOption*: Option[string]
-    cacheRelOption*: Option[string]
-    gpgRelOption*: Option[string]
-    colorMode*: ColorMode
+  PacmanConfig* = tuple[
+    common: CommonConfig,
+    sysrootOption: Option[string],
+    rootRelOption: Option[string],
+    dbRelOption: Option[string],
+    cacheRelOption: Option[string],
+    gpgRelOption: Option[string],
+    colorMode: ColorMode
+  ]
 
-  Config* = object of CommonConfig
-    root*: string
-    db*: string
-    cache*: string
-    userCacheInitial*: string
-    userCacheCurrent*: string
-    tmpRootInitial*: string
-    tmpRootCurrent*: string
-    color*: bool
-    aurRepo*: string
-    aurComments*: bool
-    checkIgnored*: bool
-    ignoreArch*: bool
-    printAurNotFound*: bool
-    printLocalIsNewer*: bool
-    sudoExec*: bool
-    viewNoDefault*: bool
-    preserveBuilt*: PreserveBuilt
-    preBuildCommand*: Option[string]
+  Config* = tuple[
+    common: CommonConfig,
+    root: string,
+    db: string,
+    cache: string,
+    userCacheInitial: string,
+    userCacheCurrent: string,
+    tmpRootInitial: string,
+    tmpRootCurrent: string,
+    color: bool,
+    aurRepo: string,
+    aurComments: bool,
+    checkIgnored: bool,
+    ignoreArch: bool,
+    printAurNotFound: bool,
+    printLocalIsNewer: bool,
+    sudoExec: bool,
+    viewNoDefault: bool,
+    preserveBuilt: PreserveBuilt,
+    preBuildCommand: Option[string]
+  ]
 
 proc readConfigFile*(configFile: string):
   (OrderedTable[string, ref Table[string, string]], bool) =
@@ -93,7 +98,7 @@ proc readConfigFile*(configFile: string):
   (table, wasError)
 
 proc ignored*(config: Config, name: string, groups: openArray[string]): bool =
-  name in config.ignorePkgs or (config.ignoreGroups * groups.toSet).len > 0
+  name in config.common.ignorePkgs or (config.common.ignoreGroups * groups.toSet).len > 0
 
 proc get*(colorMode: ColorMode): bool =
   case colorMode:
@@ -164,7 +169,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
     .optLast.get(PreserveBuilt.disabled)
   let preBuildCommand = options.opt("PreBuildCommand")
 
-  if config.dbs.find(aurRepo) >= 0:
+  if config.common.dbs.find(aurRepo) >= 0:
     raise commandError(tr"repo '$#' can not be used as fake AUR repository" % [aurRepo],
       colorNeeded = some(color))
 
@@ -172,19 +177,15 @@ proc obtainConfig*(config: PacmanConfig): Config =
     raise commandError(trp("could not register '%s' database (%s)\n") %
       [aurRepo, tra"wrong or NULL argument passed"], colorNeeded = some(color))
 
-  Config(dbs: config.dbs, arch: config.arch, debug: config.debug,
-    progressBar: config.progressBar, verbosePkgList: config.verbosePkgList,
-    downloadTimeout: config.downloadTimeout, pgpKeyserver: config.pgpKeyserver,
-    defaultRoot: config.defaultRoot and config.sysrootOption.isNone,
-    ignorePkgs: config.ignorePkgs, ignoreGroups: config.ignoreGroups,
-    root: root, db: db, cache: cache, userCacheInitial: userCacheInitial,
-    userCacheCurrent: userCacheCurrent, tmpRootInitial: tmpRootInitial,
-    tmpRootCurrent: tmpRootCurrent, color: color, aurRepo: aurRepo, aurComments: aurComments,
-    checkIgnored: checkIgnored, ignoreArch: ignoreArch, printAurNotFound: printAurNotFound,
-    printLocalIsNewer: printLocalIsNewer, sudoExec: sudoExec, viewNoDefault: viewNoDefault,
-    preserveBuilt: preserveBuilt, preBuildCommand: preBuildCommand)
+  ((config.common.dbs, config.common.arch, config.common.debug, config.common.progressBar,
+    config.common.verbosePkgLists, config.common.downloadTimeout, config.common.pgpKeyserver,
+    config.common.defaultRoot and config.sysrootOption.isNone,
+    config.common.ignorePkgs, config.common.ignoreGroups),
+    root, db, cache, userCacheInitial, userCacheCurrent, tmpRootInitial, tmpRootCurrent,
+    color, aurRepo, aurComments, checkIgnored, ignoreArch, printAurNotFound, printLocalIsNewer,
+    sudoExec, viewNoDefault, preserveBuilt, preBuildCommand)
 
 template withAlpmConfig*(config: Config, passDbs: bool,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =
-  withAlpm(config.root, config.db, if passDbs: config.dbs else: @[], config.arch,
-    handle, alpmDbs, errors, body)
+  withAlpm(config.root, config.db, if passDbs: config.common.dbs else: @[],
+    config.common.arch, handle, alpmDbs, errors, body)

@@ -134,7 +134,7 @@ proc cloneAndCopy(config: Config, quiet: bool,
   let (update, terminate) = if quiet:
       (proc (a: int, b: int) {.closure.} = discard, proc () {.closure.} = discard)
     else:
-      printProgressShare(config.progressBar, tr"cloning repositories")
+      printProgressShare(config.common.progressBar, tr"cloning repositories")
 
   let (results, rerrors) = cloneRepositories(config, baseTargets, update)
   terminate()
@@ -169,7 +169,7 @@ proc handleSyncSource*(args: seq[Argument], config: Config): int =
         findSyncTargets(handle, dbs, targets, config.aurRepo, false, false)
 
       let (rpcInfos, aerrors) = getRpcPackageInfos(checkAurNames,
-        config.aurRepo, config.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout)
       for e in aerrors: printError(config.color, e)
 
       let notFoundTargets = filterNotFoundSyncTargets(syncTargets,

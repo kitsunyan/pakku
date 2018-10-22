@@ -299,7 +299,7 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
   let cacheRel = table.opt("CacheDir")
   let gpgRel = table.opt("GPGDir")
   let color = if table.hasKey("Color"): ColorMode.colorAuto else: ColorMode.colorNever
-  let verbosePkgList = table.hasKey("VerbosePkgLists")
+  let verbosePkgLists = table.hasKey("VerbosePkgLists")
   let downloadTimeout = not table.hasKey("DisableDownloadTimeout")
   let arch = table.opt("Architecture").get("auto")
   let ignorePkgs = table.opt("IgnorePkg").get("").splitWhitespace.toSet
@@ -310,11 +310,8 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
     raise commandError(tr"can not get the architecture",
       colorNeeded = some(color.get))
 
-  PacmanConfig(sysrootOption: none(string), rootRelOption: rootRel,
-    dbRelOption: dbRel, cacheRelOption: cacheRel, gpgRelOption: gpgRel,
-    dbs: dbs, arch: archFinal, colorMode: color, debug: false, progressBar: true,
-    verbosePkgList: verbosePkgList, downloadTimeout: downloadTimeout, pgpKeyserver: none(string),
-    defaultRoot: true, ignorePkgs: ignorePkgs, ignoreGroups: ignoreGroups)
+  ((dbs, archFinal, false, true, verbosePkgLists, downloadTimeout, none(string), true,
+    ignorePkgs, ignoreGroups), none(string), rootRel, dbRel, cacheRel, gpgRel, color)
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   proc getAll(pair: OptionPair): seq[string] =
@@ -343,7 +340,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let dbRel = getAll(%%%"dbpath").optLast.orElse(defaultConfig.dbRelOption)
   let cacheRel = getAll(%%%"cachedir").optLast.orElse(defaultConfig.cacheRelOption)
   let gpgRel = getAll(%%%"gpgdir").optLast.orElse(defaultConfig.gpgRelOption)
-  let arch = getAll(%%%"arch").optLast.get(defaultConfig.arch)
+  let arch = getAll(%%%"arch").optLast.get(defaultConfig.common.arch)
   let colorStr = getAll(%%%"color").optLast.get($defaultConfig.colorMode)
   let color = getColor(colorStr)
 
@@ -388,19 +385,16 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let argsRootRel = rootRel.get("/")
   let defaultRoot = defaultRootRel == argsRootRel
 
-  let config = PacmanConfig(sysrootOption: sysroot, rootRelOption: rootRel,
-    dbRelOption: dbRel, cacheRelOption: cacheRel, gpgRelOption: gpgRel,
-    dbs: defaultConfig.dbs, arch: arch, colorMode: color, debug: debug,
-    progressBar: progressBar, verbosePkgList: defaultConfig.verbosePkgList,
-    downloadTimeout: defaultConfig.downloadTimeout and downloadTimeout,
-    pgpKeyserver: pgpKeyserver, defaultRoot: defaultRoot,
-    ignorePkgs: ignorePkgs + defaultConfig.ignorePkgs,
-    ignoreGroups: ignoreGroups + defaultConfig.ignoreGroups)
+  let config: PacmanConfig = ((defaultConfig.common.dbs, arch, debug, progressBar,
+    defaultConfig.common.verbosePkgLists, defaultConfig.common.downloadTimeout and downloadTimeout,
+    pgpKeyserver, defaultRoot, ignorePkgs + defaultConfig.common.ignorePkgs,
+    ignoreGroups + defaultConfig.common.ignoreGroups),
+    sysroot, rootRel, dbRel, cacheRel, gpgRel, color)
 
   pacmanValidateAndThrow((("sysroot", sysroot, ArgumentType.long), sysroot.isSome),
     (("root", some(config.pacmanRootRel), ArgumentType.long), not defaultRoot),
     (("dbpath", some(config.pacmanDbRel), ArgumentType.long), true),
-    (("arch", some(config.arch), ArgumentType.long), true),
+    (("arch", some(config.common.arch), ArgumentType.long), true),
     (("color", some(colorStr), ArgumentType.long), true))
 
   config

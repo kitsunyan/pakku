@@ -116,7 +116,7 @@ proc filterNotFoundSyncTargets*[T: RpcPackageInfo](syncTargets: seq[SyncPackageT
     pkgInfoReferencesTable, upToDateNeededTable, aurRepo)
 
 proc printSyncNotFound*(config: Config, notFoundTargets: seq[SyncPackageTarget]) =
-  let dbs = config.dbs.toSet
+  let dbs = config.common.dbs.toSet
 
   for target in notFoundTargets:
     if target.repo.isNone or target.repo == some(config.aurRepo) or target.repo.unsafeGet in dbs:
@@ -463,7 +463,7 @@ proc obtainSrcInfo*(path: string): string =
 
 proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): seq[PackageInfo] =
   let srcInfo = obtainSrcInfo(path)
-  let res = parseSrcInfo(pkgInfos[0].repo, srcInfo, config.arch,
+  let res = parseSrcInfo(pkgInfos[0].repo, srcInfo, config.common.arch,
     pkgInfos[0].gitUrl, pkgInfos[0].gitSubdir)
   if res.len > 0:
     res
@@ -548,7 +548,7 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
           "clone", "-q", url, "--single-branch", base)
     else:
       quit(1))) == 0:
-    let commit = bisectVersion(repoPath, config.debug, none(string),
+    let commit = bisectVersion(repoPath, config.common.debug, none(string),
       "source", git.path, version, dropPrivileges)
 
     if commit.isNone:
@@ -609,7 +609,7 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
 
           if repoPath.isSome:
             let srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/" & git.path)
-            let pkgInfos = parseSrcInfo(repo, srcInfo, config.arch,
+            let pkgInfos = parseSrcInfo(repo, srcInfo, config.common.arch,
               git.url, some(git.path))
               .filter(i => i.version == version)
             (pkgInfos, repoPath)
@@ -731,7 +731,7 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
         except:
           ""
 
-        let addPkgInfos = parseSrcInfo(config.aurRepo, srcInfos, config.arch,
+        let addPkgInfos = parseSrcInfo(config.aurRepo, srcInfos, config.common.arch,
           bases[index].gitUrl, none(string), rpcInfos)
         if keepRepos:
           cloneNext(index + 1, addPkgInfos ^& pkgInfos, repoPath ^& paths, errors)

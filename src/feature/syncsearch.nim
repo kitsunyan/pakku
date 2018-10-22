@@ -12,7 +12,7 @@ proc handleSyncSearch*(args: seq[Argument], config: Config): int =
     let quiet = args.check(%%%"quiet")
 
     let (aurPackages, aerrors) = findAurPackages(args.targets,
-      config.aurRepo, config.downloadTimeout)
+      config.aurRepo, config.common.downloadTimeout)
     for e in aerrors: printError(config.color, e)
 
     type Package = tuple[rpcInfo: RpcPackageInfo, installedVersion: Option[string]]

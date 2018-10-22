@@ -99,7 +99,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
     if currentUser.uid != 0 and config.sudoExec and not printMode:
       execSudo(args)
     else:
-      let isNonDefaultRoot = not config.defaultRoot
+      let isNonDefaultRoot = not config.common.defaultRoot
       let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
 
       let build = args.check(%%%"build")

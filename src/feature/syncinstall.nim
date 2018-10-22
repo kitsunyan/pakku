@@ -41,7 +41,8 @@ proc groupsSeq(pkg: ptr AlpmPackage): seq[string] =
 proc createCloneProgress(config: Config, count: int, flexible: bool, printMode: bool):
   (proc (update: int, terminate: int) {.closure.}, proc {.closure.}) =
   if count >= 1 and not printMode:
-    let (update, terminate) = printProgressShare(config.progressBar, tr"cloning repositories")
+    let (update, terminate) = printProgressShare(config.common.progressBar,
+      tr"cloning repositories")
     update(0, count)
 
     if flexible:
@@ -207,12 +208,13 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
         withAur():
           let (pkgInfos, additionalPkgInfos, paths) = if printMode: (block:
               let (pkgInfos, additionalPkgInfos, aerrors) = getAurPackageInfos(aurCheck
-                .map(r => r.name), config.aurRepo, config.arch, config.downloadTimeout)
+                .map(r => r.name), config.aurRepo, config.common.arch,
+                config.common.downloadTimeout)
               for e in aerrors: printError(config.color, e)
               (pkgInfos, additionalPkgInfos, newSeq[string]()))
             else: (block:
               let (rpcInfos, aerrors) = getRpcPackageInfos(aurCheck.map(r => r.name),
-                config.aurRepo, config.downloadTimeout)
+                config.aurRepo, config.common.downloadTimeout)
               for e in aerrors: printError(config.color, e)
               let (pkgInfos, additionalPkgInfos, paths, cerrors) =
                 cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
@@ -405,7 +407,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
         file.writeLine('#'.repeat(73))
         file.writeLine("# PAKKU OVERRIDES")
         file.writeLine('#'.repeat(73))
-        file.writeLine("CARCH=" & config.arch.bashEscape)
+        file.writeLine("CARCH=" & config.common.arch.bashEscape)
         file.writeLine("PKGDEST=" & config.tmpRootInitial.bashEscape)
       finally:
         file.close()
@@ -558,7 +560,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   let (buildResults, buildCode) = buildNext(0, nil)
 
   proc formatArchiveFile(pkgInfo: PackageInfo, ext: string): string =
-    let arch = if pkgInfo.archs.len > 0: config.arch else: "any"
+    let arch = if pkgInfo.archs.len > 0: config.common.arch else: "any"
     config.tmpRootInitial & "/" & pkgInfo.name & "-" & pkgInfo.version & "-" & arch & ext
 
   let allFiles = lc[(r.name, formatArchiveFile(r.pkgInfo, br.ext)) |
@@ -649,7 +651,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
             template run(args: varargs[string]) =
               discard forkWait(() => (block:
                 dropPrivilegesAndChdir(none(string)):
-                  if not config.debug:
+                  if not config.common.debug:
                     discard close(1)
                     discard open("/dev/null")
                     discard close(2)
@@ -708,7 +710,7 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
   if basePackages.len > 0: (block:
     let installedVersions = installed.map(i => (i.name, i.version)).toTable
 
-    printPackages(config.color, config.verbosePkgList,
+    printPackages(config.color, config.common.verbosePkgLists,
       lc[(i.name, i.repo, installedVersions.opt(i.name), i.version) |
         (g <- basePackages, b <- g, i <- b), PackageInstallFormat]
         .sorted((a, b) => cmp(a.name, b.name)))
@@ -775,9 +777,9 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
                 if res == 'y' or newSkipKeys:
                   let importCode = forkWait(() => (block:
                     dropPrivilegesAndChdir(none(string)):
-                      if config.pgpKeyserver.isSome:
+                      if config.common.pgpKeyserver.isSome:
                         forkWait(() => execResult(gpgCmd,
-                          "--keyserver", config.pgpKeyserver.unsafeGet,
+                          "--keyserver", config.common.pgpKeyserver.unsafeGet,
                           "--recv-keys", pgpKeys[index]))
                       else:
                         forkWait(() => execResult(gpgCmd,
@@ -978,11 +980,11 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
 
   let (pkgInfos, additionalPkgInfos, paths, errors) = if printMode: (block:
       let (pkgInfos, additionalPkgInfos, aerrors) = getAurPackageInfos(fullRpcInfos
-        .map(i => i.name), config.aurRepo, config.arch, config.downloadTimeout)
+        .map(i => i.name), config.aurRepo, config.common.arch, config.common.downloadTimeout)
       (pkgInfos, additionalPkgInfos, newSeq[string](), aerrors.deduplicate))
     else: (block:
       let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name),
-        config.aurRepo, config.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout)
       let (pkgInfos, additionalPkgInfos, paths, cerrors) =
         cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
       (pkgInfos, additionalPkgInfos, paths, (toSeq(aerrors.items) & cerrors).deduplicate))
@@ -1067,7 +1069,7 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
       if not printMode:
         echo(tr"checking AUR database for upgrades...")
       let (upgradeRpcInfos, rerrors) = getRpcPackageInfos(checkAurUpgradeNames,
-        config.aurRepo, config.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout)
       for e in rerrors: printError(config.color, e)
       upgradeRpcInfos)
     else:
@@ -1335,7 +1337,7 @@ proc resolveAurTargets(config: Config, targets: seq[PackageTarget], printMode: b
         echo(tr"checking AUR database for targets...")
 
       let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurTargetNames,
-        config.aurRepo, config.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout)
       for e in rerrors: printError(config.color, e)
       rpcInfos)
     else:
