@@ -109,12 +109,11 @@ proc copyFiles(config: Config, quiet: bool, results: seq[CloneResult]): List[str
 
   copyNext(0, nil)
 
-proc cloneAndCopy(config: Config, quiet: bool,
-  fullTargets: seq[FullPackageTarget[RpcPackageInfo]]): int =
+proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarget]): int =
   let baseTargets = fullTargets.foldl(block:
     let bases = a.map(x => x.base)
     if b.isAurTargetFull(config.aurRepo):
-      let rpcInfo = b.pkgInfo.get
+      let rpcInfo = b.rpcInfo.get
       if rpcInfo.base in bases:
         a
       else:
@@ -179,5 +178,5 @@ proc handleSyncSource*(args: seq[Argument], config: Config): int =
         printSyncNotFound(config, notFoundTargets)
         1
       else:
-        let fullTargets = mapAurTargets[RpcPackageInfo](syncTargets, rpcInfos, config.aurRepo)
+        let fullTargets = mapAurTargets(syncTargets, rpcInfos, config.aurRepo)
         cloneAndCopy(config, quiet, fullTargets)

@@ -34,10 +34,8 @@ proc parseRpcPackageInfo(obj: JsonNode, repo: string): Option[RpcPackageInfo] =
   let popularity = obj["Popularity"].getFloat(0)
 
   if base.len > 0 and name.len > 0:
-    some(RpcPackageInfo(repo: repo, base: base, name: name, version: version,
-      description: description, maintainer: maintainer,
-      firstSubmitted: firstSubmitted, lastModified: lastModified, outOfDate: outOfDate,
-      votes: votes, popularity: popularity, gitUrl: gitUrl(base), gitSubdir: none(string)))
+    some((repo, base, name, version, description, maintainer, firstSubmitted, lastModified,
+      outOfDate, votes, popularity, gitUrl(base), none(string)))
   else:
     none(RpcPackageInfo)
 
@@ -113,11 +111,11 @@ proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeo
         let infos = lc[x | (y <- parsed, x <- y.infos), PackageInfo]
         let errors = lc[x | (y <- parsed, x <- y.error), string]
 
-        let table = infos.map(i => (i.name, i)).toTable
+        let table = infos.map(i => (i.rpc.name, i)).toTable
         let pkgInfos = lc[x | (p <- pkgs, x <- table.opt(p)), PackageInfo]
 
         let names = rpcInfos.map(i => i.name).toSet
-        let additionalPkgInfos = infos.filter(i => not (i.name in names))
+        let additionalPkgInfos = infos.filter(i => not (i.rpc.name in names))
 
         (pkgInfos, additionalPkgInfos, errors)
 

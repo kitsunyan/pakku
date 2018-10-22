@@ -29,8 +29,8 @@ type
   SyncPackageTarget* = object of PackageTarget
     foundInfos*: seq[SyncFoundInfo]
 
-  FullPackageTarget*[T] = object of SyncPackageTarget
-    pkgInfo*: Option[T]
+  FullPackageTarget* = object of SyncPackageTarget
+    rpcInfo*: Option[RpcPackageInfo]
 
   LookupBaseGroup = tuple[
     base: string,
@@ -95,25 +95,17 @@ proc packageTargets*(args: seq[Argument], parseDestination: bool): seq[PackageTa
 proc isAurTargetSync*(target: SyncPackageTarget, aurRepo: string): bool =
   target.foundInfos.len == 0 and (target.repo.isNone or target.repo == some(aurRepo))
 
-proc isAurTargetFull*[T: RpcPackageInfo](target: FullPackageTarget[T], aurRepo: string): bool =
+proc isAurTargetFull*(target: SyncPackageTarget, aurRepo: string): bool =
   target.foundInfos.len > 0 and target.foundInfos[0].repo == aurRepo
 
-proc filterNotFoundSyncTargetsInternal(syncTargets: seq[SyncPackageTarget],
-  pkgInfoReferencesTable: Table[string, PackageReference],
-  upToDateNeededTable: Table[string, PackageReference],
+proc filterNotFoundSyncTargets*(syncTargets: seq[SyncPackageTarget],
+  rpcInfos: seq[RpcPackageInfo], upToDateNeededTable: Table[string, PackageReference],
   aurRepo: string): seq[SyncPackageTarget] =
-  # collect packages which were found neither in sync DB nor in AUR
+  let pkgInfoReferencesTable = rpcInfos.map(i => (i.name, i.toPackageReference)).toTable
   syncTargets.filter(t => not (upToDateNeededTable.opt(t.reference.name)
     .map(r => t.reference.isProvidedBy(r, true)).get(false)) and t.foundInfos.len == 0 and
     not (t.isAurTargetSync(aurRepo) and pkgInfoReferencesTable.opt(t.reference.name)
     .map(r => t.reference.isProvidedBy(r, true)).get(false)))
-
-proc filterNotFoundSyncTargets*[T: RpcPackageInfo](syncTargets: seq[SyncPackageTarget],
-  pkgInfos: seq[T], upToDateNeededTable: Table[string, PackageReference],
-  aurRepo: string): seq[SyncPackageTarget] =
-  let pkgInfoReferencesTable = pkgInfos.map(i => (i.name, i.toPackageReference)).toTable
-  filterNotFoundSyncTargetsInternal(syncTargets,
-    pkgInfoReferencesTable, upToDateNeededTable, aurRepo)
 
 proc printSyncNotFound*(config: Config, notFoundTargets: seq[SyncPackageTarget]) =
   let dbs = config.common.dbs.toSet
@@ -186,27 +178,29 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
   let checkAurNames = syncTargets.filter(t => t.isAurTargetSync(aurRepo)).map(t => t.reference.name)
   (syncTargets, checkAurNames)
 
-proc mapAurTargets*[T: RpcPackageInfo](targets: seq[SyncPackageTarget],
-  pkgInfos: seq[T], aurRepo: string): seq[FullPackageTarget[T]] =
-  let aurTable = pkgInfos.map(i => (i.name, i)).toTable
+proc mapAurTargets*(targets: seq[SyncPackageTarget], rpcInfos: seq[RpcPackageInfo],
+  aurRepo: string): seq[FullPackageTarget] =
+  let aurTable = rpcInfos.map(i => (i.name, i)).toTable
 
-  targets.map(proc (target: SyncPackageTarget): FullPackageTarget[T] =
+  targets.map(proc (target: SyncPackageTarget): FullPackageTarget =
     let res = if target.foundInfos.len == 0 and aurTable.hasKey(target.reference.name): (block:
-        let pkgInfo = aurTable[target.reference.name]
-        if target.reference.isProvidedBy(pkgInfo.toPackageReference, true):
-          some(((aurRepo, some((pkgInfo.base, pkgInfo.version, none(string)))), pkgInfo))
+        let rpcInfo = aurTable[target.reference.name]
+        if target.reference.isProvidedBy(rpcInfo.toPackageReference, true):
+          some(((aurRepo, some((rpcInfo.base, rpcInfo.version, none(string)))), rpcInfo))
         else:
-          none((SyncFoundInfo, T)))
+          none((SyncFoundInfo, RpcPackageInfo)))
       else:
-        none((SyncFoundInfo, T))
+        none((SyncFoundInfo, RpcPackageInfo))
 
     if res.isSome:
-      let (syncInfo, pkgInfo) = res.get
-      FullPackageTarget[T](reference: target.reference, repo: target.repo,
-        destination: target.destination, foundInfos: @[syncInfo], pkgInfo: some(pkgInfo))
+      let (syncInfo, rpcInfo) = res.get
+      FullPackageTarget(reference: target.reference, repo: target.repo,
+        destination: target.destination, foundInfos: @[syncInfo],
+        rpcInfo: some(rpcInfo))
     else:
-      FullPackageTarget[T](reference: target.reference, repo: target.repo,
-        destination: target.destination, foundInfos: target.foundInfos, pkgInfo: none(T)))
+      FullPackageTarget(reference: target.reference, repo: target.repo,
+        destination: target.destination, foundInfos: target.foundInfos,
+        rpcInfo: none(RpcPackageInfo)))
 
 proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptional: bool,
   assumeExplicit: HashSet[string]): (seq[PackageReference], HashSet[string], HashSet[string],
@@ -463,8 +457,8 @@ proc obtainSrcInfo*(path: string): string =
 
 proc reloadPkgInfos*(config: Config, path: string, pkgInfos: seq[PackageInfo]): seq[PackageInfo] =
   let srcInfo = obtainSrcInfo(path)
-  let res = parseSrcInfo(pkgInfos[0].repo, srcInfo, config.common.arch,
-    pkgInfos[0].gitUrl, pkgInfos[0].gitSubdir)
+  let res = parseSrcInfo(pkgInfos[0].rpc.repo, srcInfo, config.common.arch,
+    pkgInfos[0].rpc.gitUrl, pkgInfos[0].rpc.gitSubdir)
   if res.len > 0:
     res
   else:
@@ -611,7 +605,7 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
             let srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/" & git.path)
             let pkgInfos = parseSrcInfo(repo, srcInfo, config.common.arch,
               git.url, some(git.path))
-              .filter(i => i.version == version)
+              .filter(i => i.rpc.version == version)
             (pkgInfos, repoPath)
           else:
             (newSeq[PackageInfo](), none(string))
@@ -628,7 +622,7 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
         let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
         let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
 
-        let pkgInfosTable = pkgInfos.map(i => (i.name, i)).toTable
+        let pkgInfosTable = pkgInfos.map(i => (i.rpc.name, i)).toTable
 
         let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
           x <- pkgInfosTable.opt(y)), PackageInfo]
@@ -642,11 +636,11 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
         discard rmdir(config.tmpRoot(dropPrivileges))
         (foundPkgInfos, paths, errorMessages)
 
-proc obtainBuildPkgInfos*[T: RpcPackageInfo](config: Config,
-  pacmanTargets: seq[FullPackageTarget[T]], progressCallback: (int, int) -> void,
-  dropPrivileges: bool): (seq[PackageInfo], seq[string], seq[string]) =
+proc obtainBuildPkgInfos*(config: Config, pacmanTargets: seq[FullPackageTarget],
+  progressCallback: (int, int) -> void, dropPrivileges: bool):
+  (seq[PackageInfo], seq[string], seq[string]) =
   let bases = pacmanTargets
-    .map(proc (target: FullPackageTarget[T]): LookupBaseGroup =
+    .map(proc (target: FullPackageTarget): LookupBaseGroup =
       let info = target.foundInfos[0]
       let pkg = info.pkg.get
       (pkg.base, pkg.version, pkg.arch.get, info.repo))
@@ -740,11 +734,11 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
           cloneNext(index + 1, addPkgInfos ^& pkgInfos, paths, errors)
 
   let (fullPkgInfos, paths, errors) = cloneNext(0, nil, nil, nil)
-  let pkgInfosTable = fullPkgInfos.map(i => (i.name, i)).toTable
+  let pkgInfosTable = fullPkgInfos.map(i => (i.rpc.name, i)).toTable
   let resultPkgInfos = lc[x | (y <- rpcInfos, x <- pkgInfosTable.opt(y.name)), PackageInfo]
 
   let names = rpcInfos.map(i => i.name).toSet
-  let additionalPkgInfos = fullPkgInfos.filter(i => not (i.name in names))
+  let additionalPkgInfos = fullPkgInfos.filter(i => not (i.rpc.name in names))
 
   discard rmdir(config.tmpRoot(dropPrivileges))
   (resultPkgInfos, additionalPkgInfos, paths, errors)

@@ -1,5 +1,5 @@
 import
-  future, options, posix, sequtils, strutils, times,
+  future, options, posix, sequtils, strutils, tables, times,
   "../args", "../aur", "../common", "../config", "../format", "../package",
     "../pacman", "../utils",
   "../wrapper/alpm"
@@ -57,16 +57,16 @@ proc formatDate(date: int64): Option[string] =
   if res > 0: some(buffer.toString(none(int))) else: none(string)
 
 proc handleTarget(config: Config, padding: int, args: seq[Argument],
-  target: FullPackageTarget[PackageInfo]): int =
+  target: FullPackageTarget, pkgInfoOption: Option[PackageInfo]): int =
   if target.foundInfos.len > 0:
-    if isAurTargetFull[PackageInfo](target, config.aurRepo):
-      let pkgInfo = target.pkgInfo.unsafeGet
+    if isAurTargetFull(target, config.aurRepo):
+      let pkgInfo = pkgInfoOption.get
 
       printPackageInfo(padding, config.color,
         (trp"Repository", @[config.aurRepo], false),
-        (trp"Name", @[pkgInfo.name], false),
-        (trp"Version", @[pkgInfo.version], false),
-        (trp"Description", toSeq(pkgInfo.description.items), false),
+        (trp"Name", @[pkgInfo.rpc.name], false),
+        (trp"Version", @[pkgInfo.rpc.version], false),
+        (trp"Description", toSeq(pkgInfo.rpc.description.items), false),
         (trp"Architecture", pkgInfo.archs, false),
         (trp"URL", toSeq(pkgInfo.url.items), false),
         (trp"Licenses", pkgInfo.licenses, false),
@@ -76,11 +76,14 @@ proc handleTarget(config: Config, padding: int, args: seq[Argument],
         formatDeps(trp"Optional Deps", config, pkgInfo.optional),
         formatDeps(trp"Conflicts With", config, pkgInfo.conflicts),
         formatDeps(trp"Replaces", config, pkgInfo.replaces),
-        (tr"Maintainer", toSeq(pkgInfo.maintainer.items()), false),
-        (tr"First Submitted", toSeq(pkgInfo.firstSubmitted.map(formatDate).flatten.items()), false),
-        (tr"Last Modified", toSeq(pkgInfo.lastModified.map(formatDate).flatten.items()), false),
-        (tr"Out Of Date", toSeq(pkgInfo.outOfDate.map(formatDate).flatten.items()), false),
-        (tr"Rating", @[formatPkgRating(pkgInfo.votes, pkgInfo.popularity)], false))
+        (tr"Maintainer", toSeq(pkgInfo.rpc.maintainer.items()), false),
+        (tr"First Submitted", toSeq(pkgInfo.rpc.firstSubmitted
+          .map(formatDate).flatten.items()), false),
+        (tr"Last Modified", toSeq(pkgInfo.rpc.lastModified
+          .map(formatDate).flatten.items()), false),
+        (tr"Out Of Date", toSeq(pkgInfo.rpc.outOfDate
+          .map(formatDate).flatten.items()), false),
+        (tr"Rating", @[formatPkgRating(pkgInfo.rpc.votes, pkgInfo.rpc.popularity)], false))
 
       0
     elif target.reference.constraint.isSome:
@@ -112,10 +115,10 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
       config.aurRepo, config.common.arch, config.common.downloadTimeout)
     for e in aerrors: printError(config.color, e)
 
-    let fullTargets = mapAurTargets[PackageInfo](syncTargets, pkgInfos, config.aurRepo)
+    let fullTargets = mapAurTargets(syncTargets, pkgInfos.map(p => p.rpc), config.aurRepo)
 
     let code = min(aerrors.len, 1)
-    if fullTargets.filter(t => isAurTargetFull[PackageInfo](t, config.aurRepo) or
+    if fullTargets.filter(t => isAurTargetFull(t, config.aurRepo) or
       t.repo == some(config.aurRepo) or t.reference.constraint.isSome).len == 0:
       if code == 0:
         pacmanExec(false, config.color, callArgs)
@@ -125,6 +128,9 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
     else:
       let finalArgs = callArgs.filter(arg => not arg.isTarget)
       let padding = pacmanInfoStrings.map(s => s.trp).computeMaxLength
+      let pkgInfosTable = pkgInfos.map(i => (i.rpc.toPackageReference, i)).toTable
 
-      let codes = code & lc[handleTarget(config, padding, finalArgs, x) | (x <- fullTargets), int]
+      let codes = code & lc[handleTarget(config, padding, finalArgs, x,
+        x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten) |
+        (x <- fullTargets), int]
       codes.filter(c => c != 0).optFirst.get(0)

@@ -22,36 +22,39 @@ type
     constraint: Option[VersionConstraint]
   ]
 
-  RpcPackageInfo* = object of RootObj
-    repo*: string
-    base*: string
-    name*: string
-    version*: string
-    description*: Option[string]
-    maintainer*: Option[string]
-    firstSubmitted*: Option[int64]
-    lastModified*: Option[int64]
-    outOfDate*: Option[int64]
-    votes*: int
-    popularity*: float
-    gitUrl*: string
-    gitSubdir*: Option[string]
+  RpcPackageInfo* = tuple[
+    repo: string,
+    base: string,
+    name: string,
+    version: string,
+    description: Option[string],
+    maintainer: Option[string],
+    firstSubmitted: Option[int64],
+    lastModified: Option[int64],
+    outOfDate: Option[int64],
+    votes: int,
+    popularity: float,
+    gitUrl: string,
+    gitSubdir: Option[string]
+  ]
 
-  PackageInfo* = object of RpcPackageInfo
-    baseIndex*: int
-    baseCount*: int
-    archs*: seq[string]
-    url*: Option[string]
-    licenses*: seq[string]
-    groups*: seq[string]
-    pgpKeys*: seq[string]
-    depends*: seq[PackageReference]
-    makeDepends*: seq[PackageReference]
-    checkDepends*: seq[PackageReference]
-    optional*: seq[PackageReference]
-    provides*: seq[PackageReference]
-    conflicts*: seq[PackageReference]
-    replaces*: seq[PackageReference]
+  PackageInfo* = tuple[
+    rpc: RpcPackageInfo,
+    baseIndex: int,
+    baseCount: int,
+    archs: seq[string],
+    url: Option[string],
+    licenses: seq[string],
+    groups: seq[string],
+    pgpKeys: seq[string],
+    depends: seq[PackageReference],
+    makeDepends: seq[PackageReference],
+    checkDepends: seq[PackageReference],
+    optional: seq[PackageReference],
+    provides: seq[PackageReference],
+    conflicts: seq[PackageReference],
+    replaces: seq[PackageReference]
+  ]
 
   GitRepo* = tuple[
     url: string,
@@ -305,19 +308,12 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
 
   let info = rpcInfos.filter(i => i.name == name).optLast
 
-  lc[PackageInfo(baseIndex: baseIndex, baseCount: baseCount,
-    repo: repo, base: b, name: name, version: v, description: description,
-    archs: archs, url: url, licenses: licenses, groups: groups, pgpKeys: pgpKeys,
-    depends: depends, makeDepends: makeDepends, checkDepends: checkDepends,
-    optional: optional, provides: provides, conflicts: conflicts, replaces: replaces,
-    maintainer: info.map(i => i.maintainer).flatten,
-    firstSubmitted: info.map(i => i.firstSubmitted).flatten,
-    lastModified: info.map(i => i.lastModified).flatten,
-    outOfDate: info.map(i => i.outOfDate).flatten,
-    votes: info.map(i => i.votes).get(0),
-    popularity: info.map(i => i.popularity).get(0),
-    gitUrl: gitUrl, gitSubdir: gitSubdir) |
-    (b <- base, v <- versionFull), PackageInfo].optLast
+  lc[((repo, b, name, v, description, info.map(i => i.maintainer).flatten,
+    info.map(i => i.firstSubmitted).flatten, info.map(i => i.lastModified).flatten,
+    info.map(i => i.outOfDate).flatten, info.map(i => i.votes).get(0),
+    info.map(i => i.popularity).get(0), gitUrl, gitSubdir), baseIndex,  baseCount,
+    archs, url, licenses, groups, pgpKeys, depends, makeDepends, checkDepends,
+    optional, provides, conflicts, replaces) | (b <- base, v <- versionFull), PackageInfo].optLast
 
 proc parseSrcInfo*(repo: string, srcInfo: string, arch: string, gitUrl: string,
   gitSubdir: Option[string], rpcInfos: seq[RpcPackageInfo] = @[]): seq[PackageInfo] =
