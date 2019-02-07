@@ -47,6 +47,7 @@ type
     checkIgnored*: bool
     ignoreArch*: bool
     printAurNotFound*: bool
+    printLocalIsNewer*: bool
     sudoExec*: bool
     viewNoDefault*: bool
     preserveBuilt*: PreserveBuilt
@@ -155,6 +156,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
   let checkIgnored = options.hasKey("CheckIgnored")
   let ignoreArch = options.hasKey("IgnoreArch")
   let printAurNotFound = options.hasKey("PrintAurNotFound")
+  let printLocalIsNewer = options.hasKey("PrintLocalIsNewer")
   let sudoExec = options.hasKey("SudoExec")
   let viewNoDefault = options.hasKey("ViewNoDefault")
   let preserveBuilt = toSeq(enumerate[PreserveBuilt]())
@@ -179,8 +181,8 @@ proc obtainConfig*(config: PacmanConfig): Config =
     userCacheCurrent: userCacheCurrent, tmpRootInitial: tmpRootInitial,
     tmpRootCurrent: tmpRootCurrent, color: color, aurRepo: aurRepo, aurComments: aurComments,
     checkIgnored: checkIgnored, ignoreArch: ignoreArch, printAurNotFound: printAurNotFound,
-    sudoExec: sudoExec, viewNoDefault: viewNoDefault, preserveBuilt: preserveBuilt,
-    preBuildCommand: preBuildCommand)
+    printLocalIsNewer: printLocalIsNewer, sudoExec: sudoExec, viewNoDefault: viewNoDefault,
+    preserveBuilt: preserveBuilt, preBuildCommand: preBuildCommand)
 
 template withAlpmConfig*(config: Config, passDbs: bool,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =

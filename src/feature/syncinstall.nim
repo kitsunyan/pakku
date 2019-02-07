@@ -844,7 +844,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
         not rpcInfoTable.hasKey(inst.name):
         printWarning(config.color, tr"$# was not found in AUR" % [inst.name])
 
-  if upgradeCount == 1:
+  if upgradeCount == 1 and config.printLocalIsNewer:
     for localIsNewer in localIsNewerSeq:
       printWarning(config.color, tra("%s: local (%s) is newer than %s (%s)\n") %
         [localIsNewer.name, localIsNewer.version, config.aurRepo, localIsNewer.aurVersion])
