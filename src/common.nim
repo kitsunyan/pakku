@@ -1,5 +1,5 @@
 import
-  future, options, os, osproc, posix, sequtils, sets, strutils, tables,
+  options, os, osproc, posix, sequtils, sets, strutils, sugar, tables,
   args, config, format, lists, package, pacman, utils,
   "wrapper/alpm"
 

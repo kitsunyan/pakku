@@ -1,5 +1,5 @@
 import
-  future, options, os, re, sequtils, sets, strutils, tables, utils,
+  options, os, re, sequtils, sets, strutils, sugar, tables, utils,
   "wrapper/alpm"
 
 type
@@ -98,7 +98,7 @@ static:
       let osValue = os
       let repoValue = repo
       if packageRepos.filter(pr => osValue in pr.os and repoValue in pr.repo).len >= 2:
-        raise newException(SystemError,
+        raise newException(CatchableError,
           "only single matching repo available: " & os & ":" & repo)
 
   # test unique url <> bareName links
@@ -111,9 +111,9 @@ static:
     for x1, x2 in m1:
       try:
         if m2[x2] != x1:
-          raise newException(SystemError, "")
+          raise newException(CatchableError, "")
       except:
-        raise newException(SystemError, "Invalid url <> bareName links")
+        raise newException(CatchableError, "Invalid url <> bareName links")
 
   testBareNamesAndUrls(bareNameToUrl, urlToBareName)
   testBareNamesAndUrls(urlToBareName, bareNameToUrl)

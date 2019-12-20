@@ -1,5 +1,5 @@
 import
-  future, hashes, options, os, osproc, posix, sequtils, strutils, tables
+  hashes, options, os, posix, sequtils, strutils, sugar, tables
 
 type
   HaltError* = object of Exception
@@ -219,12 +219,12 @@ proc getUser(uid: int): User =
     var pw = getpwent()
     if pw == nil:
       endpwent()
-      raise newException(SystemError, "")
+      raise newException(CatchableError, "")
     if pw.pw_uid.int == uid:
       var groups: array[100, cint]
       var ngroups: cint = 100
       if getgrouplist(pw.pw_name, pw.pw_gid, addr(groups[0]), ngroups) < 0:
-        raise newException(SystemError, "")
+        raise newException(CatchableError, "")
       else:
         let groupsSeq = groups[0 .. ngroups - 1].map(x => x.int)
         let res = ($pw.pw_name, pw.pw_uid.int, pw.pw_gid.int, groupsSeq,
@@ -287,7 +287,7 @@ proc dropPrivileges*(): bool =
 
 proc checkExec(file: string): bool =
   var statv: Stat
-  stat(file, statv) == 0 and (statv.st_mode and S_IXUSR) == S_IXUSR
+  stat(file, statv) == 0 and (statv.st_mode.cint and S_IXUSR) == S_IXUSR
 
 let sudoPrefix*: seq[string] = if checkExec(sudoCmd):
     @[sudoCmd]
@@ -343,7 +343,7 @@ proc bashEscape*(s: string): string =
     elif c == "\n"[0]:
       result &= "$'\\n'"
     elif c.cuint < 0x20.cuint or c.cuint > 0x80.cuint:
-      result &= "$'\\0x" & c.toHex & "'"
+      result &= "$'\\0x" & c.uint8.toHex & "'"
     else:
       result &= c
 

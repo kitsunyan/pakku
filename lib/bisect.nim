@@ -1,4 +1,5 @@
-import future, osproc, strutils
+import
+  osproc, strutils
 
 {.passL: "-lalpm".}
 
@@ -6,7 +7,7 @@ proc vercmp(a: cstring, b: cstring): cint
   {.cdecl, importc: "alpm_pkg_vercmp".}
 
 proc getSourceVersion(relativePath: string): seq[string] =
-  let lines = execProcess("/bin/bash", ["-c",
+  let lines = execProcess("/bin/bash", "", ["-c",
     """source "$1/PKGBUILD" && echo "$epoch" && echo "$pkgver" && echo "$pkgrel"""",
     "bash", relativePath], options = {}).split("\n")
   if lines.len == 4:

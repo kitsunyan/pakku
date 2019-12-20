@@ -1,5 +1,6 @@
-import os, ospaths
-import bisect, install
+import
+  os,
+  bisect, install
 
 let fileName = paramStr(0).splitFile().name
 let appName = getAppFilename().splitFile().name

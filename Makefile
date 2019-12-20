@@ -27,10 +27,7 @@ DIST = \
 	completion/zsh-git.patch \
 	doc/asciidoc.conf \
 	${MAN_PAGES:=.txt} \
-	lib/*.nim \
-	src/*.nim \
-	src/feature/*.nim \
-	src/wrapper/*.nim
+	$(shell find src lib -type f -name '*.nim')
 
 EXTRA_DIST = \
 	${MAN_PAGES:=.in}

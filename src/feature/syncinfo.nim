@@ -1,5 +1,5 @@
 import
-  future, options, posix, sequtils, strutils, tables, times,
+  options, posix, sequtils, strutils, sugar, tables,
   "../args", "../aur", "../common", "../config", "../format", "../package",
     "../pacman", "../utils",
   "../wrapper/alpm"

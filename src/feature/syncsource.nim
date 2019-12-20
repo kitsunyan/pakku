@@ -1,5 +1,5 @@
 import
-  future, options, os, posix, sequtils, strutils, tables,
+  options, os, posix, sequtils, strutils, sugar, tables,
   "../args", "../aur", "../common", "../config", "../format", "../lists",
     "../package", "../pacman", "../utils",
   "../wrapper/alpm"
@@ -145,7 +145,7 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
     removeDirQuiet(result.path)
   discard rmdir(config.tmpRootCurrent)
 
-  if rerrors != nil and cerrors != nil:
+  if rerrors.len > 0 or cerrors != nil:
     1
   else:
     0

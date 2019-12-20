@@ -1,5 +1,5 @@
 import
-  future, macros, options, posix, sequtils, strutils, times, unicode,
+  macros, options, posix, sequtils, strutils, sugar, times, unicode,
   utils
 
 type
@@ -94,8 +94,8 @@ proc splitLines(text: string, lineSize: int, lines: seq[string] = @[]): seq[stri
       if index < 0:
         lines & text
       else:
-        text[index .. ^1].strip.splitLines(lineSize,
-          lines & text[0 .. index - 1].strip)
+        strutils.strip(text[index .. ^1]).splitLines(lineSize,
+          lines & strutils.strip(text[0 .. index - 1]))
 
 proc printPackageInfo*(minPadding: int, color: bool, lines: varargs[PackageLineFormat]) =
   let width = getWindowSize().width
@@ -108,9 +108,9 @@ proc printPackageInfo*(minPadding: int, color: bool, lines: varargs[PackageLineF
     if values.len == 0:
       @[]
     elif forceBreak:
-      lc[x | (y <- values.map(s => s.strip.splitLines(lineSize)), x <- y), string]
+      lc[x | (y <- values.map(s => strutils.strip(s).splitLines(lineSize)), x <- y), string]
     else:
-      values.map(v => v.strip).foldl(a & "  " & b).splitLines(lineSize)
+      values.map(v => strutils.strip(v)).foldl(a & "  " & b).splitLines(lineSize)
 
   proc formatText(values: seq[string], forceBreak: bool): string =
     let textSeq = formatTextLines(values, forceBreak)

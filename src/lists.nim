@@ -42,7 +42,7 @@ static:
   template testList[T](list: List[T], testSeq: openArray[T]) =
     block:
       let s = toSeq(list.items)
-      if s != @testSeq: raise newException(SystemError, "list: " & $s)
+      if s != @testSeq: raise newException(CatchableError, "list: " & $s)
 
   let l1 = list[int]()
   testList(l1, [])

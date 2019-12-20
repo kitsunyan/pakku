@@ -1,5 +1,5 @@
 import
-  future, options, posix, re, sequtils, sets, strutils, tables,
+  options, posix, re, sequtils, sets, strutils, sugar, tables,
   utils
 
 type

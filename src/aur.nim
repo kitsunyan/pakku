@@ -1,5 +1,5 @@
 import
-  future, json, lists, options, re, sequtils, sets, strutils, tables,
+  json, lists, options, re, sequtils, sets, strutils, sugar, tables,
   package, utils,
   "wrapper/curl"
 

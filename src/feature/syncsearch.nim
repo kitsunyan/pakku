@@ -1,5 +1,5 @@
 import
-  algorithm, future, options, sequtils, strutils,
+  algorithm, options, sequtils, strutils, sugar,
   "../args", "../aur", "../config", "../common", "../format", "../package",
     "../pacman", "../utils",
   "../wrapper/alpm"

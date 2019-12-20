@@ -1,5 +1,5 @@
 import
-  future, macros, options, os, posix, re, sequtils, sets, strutils, tables,
+  macros, options, posix, sequtils, sets, strutils, sugar, tables,
   args, config, utils
 
 type
@@ -251,7 +251,7 @@ static:
   # conflicting options test
   for name, pairs in allConflictingOptions.obtainConflictsPairs:
     if pairs.len != 1:
-      raise newException(SystemError,
+      raise newException(CatchableError,
         "invalid conflicts definition: " & name & " " & $pairs)
 
 proc checkConflicts*(args: seq[Argument],

@@ -1,4 +1,5 @@
-import future, os, posix, sequtils, strutils
+import
+  os, posix, sequtils, strutils, sugar
 
 proc splitCommands(params: seq[string], index: int, res: seq[seq[string]]): seq[seq[string]] =
   if index < params.len:
@@ -53,7 +54,7 @@ proc handleInstall*(params: seq[string]): int =
 
   let packages = params[databaseIndex .. ^1]
   if packages.len /% 3 * 3 != packages.len:
-    raise newException(SystemError, "invalid arguments")
+    raise newException(CatchableError, "invalid arguments")
 
   let install: seq[tuple[name: string, file: string, mode: string]] = packages
     .distribute(packages.len /% 3)

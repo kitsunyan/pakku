@@ -1,7 +1,6 @@
 import
-  future, options, os, posix, sequtils, strutils, tables,
-  "../args", "../aur", "../common", "../config", "../format", "../lists",
-    "../package", "../pacman", "../utils",
+  options, os, posix, strutils,
+  "../args", "../common", "../config", "../format", "../pacman", "../utils",
   "../wrapper/alpm"
 
 proc handleSyncClean*(args: seq[Argument], config: Config): int =

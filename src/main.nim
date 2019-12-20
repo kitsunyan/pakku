@@ -1,5 +1,5 @@
 import
-  future, options, os, posix, re, sequtils, strutils,
+  options, os, posix, re, sequtils, strutils, sugar,
   args, config, format, pacman, utils
 
 import
