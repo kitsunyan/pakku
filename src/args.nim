@@ -168,7 +168,7 @@ iterator items*(op: OptionPair): OptionKey =
 proc filter*(args: seq[Argument], removeMatches: bool, keepTargets: bool,
   pairs: varargs[OptionPair]): seq[Argument] =
   let pairsSeq = @pairs
-  let argsSet = lc[x | (y <- pairsSeq, x <- y), OptionKey].toSet
+  let argsSet = lc[x | (y <- pairsSeq, x <- y), OptionKey].toHashSet
 
   args.filter(arg => (arg.isShort and (removeMatches xor (arg.key, false) in argsSet)) or
     (arg.isLong and (removeMatches xor (arg.key, true) in argsSet)) or

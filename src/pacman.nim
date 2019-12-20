@@ -171,7 +171,7 @@ const
     databaseOptions & filesOptions
 
   optionsWithParameter*: HashSet[OptionKey] =
-    calculateOptionsWithParameter(allOptions).toSet
+    calculateOptionsWithParameter(allOptions).toHashSet
 
   syncConflictingOptions*: seq[ConflictingOptions] = @[
     ("asdeps", @["asexplicit"]),
@@ -236,7 +236,7 @@ proc filterExtensions*(args: seq[Argument], removeMatches: bool, keepTargets: bo
   let optsFilter = if removeMatches:
       lc[x | (y <- optsSeq, x <- y), CommandOption]
     else: (block:
-      let pairs = lc[x.pair | (y <- optsSeq, x <- y), OptionPair].toSet
+      let pairs = lc[x.pair | (y <- optsSeq, x <- y), OptionPair].toHashSet
       lc[x | (x <- allOptions, not (x.pair in pairs)), CommandOption])
 
   let argsSeq = lc[x.pair | (x <- optsFilter, x.extension), OptionPair]
@@ -302,8 +302,8 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
   let verbosePkgLists = table.hasKey("VerbosePkgLists")
   let downloadTimeout = not table.hasKey("DisableDownloadTimeout")
   let arch = table.opt("Architecture").get("auto")
-  let ignorePkgs = table.opt("IgnorePkg").get("").splitWhitespace.toSet
-  let ignoreGroups = table.opt("IgnoreGroup").get("").splitWhitespace.toSet
+  let ignorePkgs = table.opt("IgnorePkg").get("").splitWhitespace.toHashSet
+  let ignoreGroups = table.opt("IgnoreGroup").get("").splitWhitespace.toHashSet
 
   let archFinal = if arch.len == 0 or arch == "auto": getMachineName().get(arch) else: arch
   if archFinal.len == 0 or archFinal == "auto":
@@ -347,9 +347,9 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let debug = args.check(%%%"debug")
   let progressBar = not args.check(%%%"noprogressbar")
   let ignorePkgs = lc[x | (y <- getAll(%%%"ignore"),
-    x <- y.split(',')), string].toSet
+    x <- y.split(',')), string].toHashSet
   let ignoreGroups = lc[x | (y <- getAll(%%%"ignoregroup"),
-    x <- y.split(',')), string].toSet
+    x <- y.split(',')), string].toHashSet
 
   let hasKeyserver = forkWaitRedirect(() => (block:
     if dropPrivileges():

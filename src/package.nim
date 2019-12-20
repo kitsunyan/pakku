@@ -73,26 +73,26 @@ type
 
 const
   packageRepos: seq[PackageRepo] = @[
-    (["arch", "parabola"].toSet,
-      ["core", "extra", "testing"].toSet,
+    (["arch", "parabola"].toHashSet,
+      ["core", "extra", "testing"].toHashSet,
       ("https://git.archlinux.org/svntogit/packages.git", none(string),
         some("packages/${BASE}"), "repos/${REPO}-${ARCH}")),
-    (["arch", "parabola"].toSet,
-      ["community", "community-testing", "multilib", "multilib-testing"].toSet,
+    (["arch", "parabola"].toHashSet,
+      ["community", "community-testing", "multilib", "multilib-testing"].toHashSet,
       ("https://git.archlinux.org/svntogit/community.git", none(string),
         some("packages/${BASE}"), "repos/${REPO}-${ARCH}")),
-    (["parabola"].toSet,
+    (["parabola"].toHashSet,
       ["libre", "libre-testing", "libre-multilib", "libre-multilib-testing",
         "nonprism", "nonprism-testing", "nonprism-multilib", "nonprism-multilib-testing",
-        "pcr", "pcr-testing", "pcr-multilib", "pcr-multilib-testing"].toSet,
+        "pcr", "pcr-testing", "pcr-multilib", "pcr-multilib-testing"].toHashSet,
       ("https://git.parabola.nu/abslibre.git", some("parabola"),
         none(string), "${REPO}/${BASE}"))
   ]
 
 static:
   # test only single match available
-  let osSet = lc[x | (r <- packageRepos, x <- r.os), string].toSet
-  let repoSet = lc[x | (r <- packageRepos, x <- r.repo), string].toSet
+  let osSet = lc[x | (r <- packageRepos, x <- r.os), string].toHashSet
+  let repoSet = lc[x | (r <- packageRepos, x <- r.repo), string].toHashSet
   for os in osSet:
     for repo in repoSet:
       let osValue = os

@@ -114,7 +114,7 @@ proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeo
         let table = infos.map(i => (i.rpc.name, i)).toTable
         let pkgInfos = lc[x | (p <- pkgs, x <- table.opt(p)), PackageInfo]
 
-        let names = rpcInfos.map(i => i.name).toSet
+        let names = rpcInfos.map(i => i.name).toHashSet
         let additionalPkgInfos = infos.filter(i => not (i.rpc.name in names))
 
         (pkgInfos, additionalPkgInfos, errors)

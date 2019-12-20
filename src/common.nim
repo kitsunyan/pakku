@@ -113,7 +113,7 @@ proc filterNotFoundSyncTargets*(syncTargets: seq[SyncPackageTarget],
     .map(r => s.target.reference.isProvidedBy(r, true)).get(false)))
 
 proc printSyncNotFound*(config: Config, notFoundTargets: seq[SyncPackageTarget]) =
-  let dbs = config.common.dbs.toSet
+  let dbs = config.common.dbs.toHashSet
 
   for sync in notFoundTargets:
     if sync.target.repo.isNone or sync.target.repo == some(config.aurRepo) or
@@ -224,11 +224,11 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
           reference
 
       let depends = toSeq(pkg.depends.items)
-        .map(d => d.toPackageReference).toSet
+        .map(d => d.toPackageReference).toHashSet
       let optional = toSeq(pkg.optional.items)
-        .map(d => d.toPackageReference).toSet
+        .map(d => d.toPackageReference).toHashSet
       let provides = toSeq(pkg.provides.items)
-        .map(d => d.toPackageReference).map(fixProvides).toSet
+        .map(d => d.toPackageReference).map(fixProvides).toHashSet
 
       installed.add(pkg.toPackageReference)
       if pkg.reason == AlpmReason.explicit:
@@ -238,7 +238,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       if provides.len > 0:
         alternatives.add($pkg.name, provides)
 
-    (installed, explicit.toSet + assumeExplicit, dependsTable, alternatives)
+    (installed, explicit.toHashSet + assumeExplicit, dependsTable, alternatives)
 
   let providedBy = lc[(y, x.key) | (x <- alternatives.namedPairs, y <- x.value),
     tuple[reference: PackageReference, name: string]]
@@ -251,19 +251,19 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       x <- y.value, withOptional or not x.optional), PackageReference]
 
     let indirect = lc[x.name | (y <- direct, x <- providedBy,
-      y.isProvidedBy(x.reference, true)), string].toSet
+      y.isProvidedBy(x.reference, true)), string].toHashSet
 
-    let checkNext = (direct.map(p => p.name).toSet + indirect) - full
+    let checkNext = (direct.map(p => p.name).toHashSet + indirect) - full
     if checkNext.len > 0: findRequired(withOptional, full, checkNext) else: full
 
-  let installedNames = installed.map(i => i.name).toSet
+  let installedNames = installed.map(i => i.name).toHashSet
 
   proc findOrphans(withOptional: bool): HashSet[string] =
-    let required = findRequired(withOptional, initSet[string](), explicit)
+    let required = findRequired(withOptional, initHashSet[string](), explicit)
     installedNames - required
 
-  let withOptionalSet = if withOptional: findOrphans(true) else: initSet[string]()
-  let withoutOptionalSet = if withoutOptional: findOrphans(false) else: initSet[string]()
+  let withOptionalSet = if withOptional: findOrphans(true) else: initHashSet[string]()
+  let withoutOptionalSet = if withoutOptional: findOrphans(false) else: initHashSet[string]()
 
   (installed, withOptionalSet, withoutOptionalSet, alternatives)
 
@@ -740,7 +740,7 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
   let pkgInfosTable = fullPkgInfos.map(i => (i.rpc.name, i)).toTable
   let resultPkgInfos = lc[x | (y <- rpcInfos, x <- pkgInfosTable.opt(y.name)), PackageInfo]
 
-  let names = rpcInfos.map(i => i.name).toSet
+  let names = rpcInfos.map(i => i.name).toHashSet
   let additionalPkgInfos = fullPkgInfos.filter(i => not (i.rpc.name in names))
 
   discard rmdir(config.tmpRoot(dropPrivileges))

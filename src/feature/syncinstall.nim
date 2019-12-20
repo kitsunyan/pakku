@@ -66,7 +66,7 @@ proc isVcs(name: string): bool =
 
 proc orderInstallation(ordered: seq[seq[seq[PackageInfo]]], grouped: seq[seq[PackageInfo]],
   satisfied: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
-  let orderedNamesSet = lc[c.rpc.name | (a <- ordered, b <- a, c <- b), string].toSet
+  let orderedNamesSet = lc[c.rpc.name | (a <- ordered, b <- a, c <- b), string].toHashSet
 
   proc hasBuildDependency(pkgInfos: seq[PackageInfo]): bool =
     for pkgInfo in pkgInfos:
@@ -482,7 +482,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
       else:
         let targetPkgInfos: seq[ReplacePkgInfo] = resultByIndices
           .map(i => (some(i.name), i.pkgInfo.get))
-        let filterNames = targetPkgInfos.map(r => r.pkgInfo.rpc.name).toSet
+        let filterNames = targetPkgInfos.map(r => r.pkgInfo.rpc.name).toHashSet
         let additionalPkgInfos: seq[ReplacePkgInfo] = resultPkgInfos
           .filter(i => not (i.rpc.name in filterNames))
           .map(i => (none(string), i))
@@ -694,7 +694,7 @@ proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
     (false, satisfied, newSeq[string](),
       newSeq[seq[seq[PackageInfo]]](), newSeq[string]())
   else:
-    let buildAndAurNamesSet = pkgInfos.map(i => i.rpc.name).toSet
+    let buildAndAurNamesSet = pkgInfos.map(i => i.rpc.name).toHashSet
     let fullPkgInfos = (pkgInfos & lc[i | (s <- satisfied.values,
       i <- s.buildPkgInfo, not (i.rpc.name in buildAndAurNamesSet)), PackageInfo])
       .deduplicatePkgInfos(config, false)
@@ -836,7 +836,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
   pkgInfos: seq[PackageInfo], acceptedPkgInfos: seq[PackageInfo], upToDateNeeded: seq[Installed],
   buildUpToDateNeeded: seq[(string, string)], localIsNewerSeq: seq[LocalIsNewer],
   targetNamesSet: HashSet[string], upgradeCount: int, noaur: bool) =
-  let acceptedSet = acceptedPkgInfos.map(i => i.rpc.name).toSet
+  let acceptedSet = acceptedPkgInfos.map(i => i.rpc.name).toHashSet
 
   if upgradeCount > 0 and not noaur and config.printAurNotFound:
     let rpcInfoTable = rpcInfos.map(i => (i.name, i)).toTable
@@ -1054,7 +1054,7 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
   fullTargets: seq[FullPackageTarget], printHeader: bool,
   printMode: bool, upgradeCount: int, noconfirm: bool, needed: bool, noaur: bool, build: bool):
   (int, seq[Installed], HashSet[string], seq[PackageInfo], seq[PackageInfo], seq[string]) =
-  template errorResult: untyped = (1, newSeq[Installed](), initSet[string](),
+  template errorResult: untyped = (1, newSeq[Installed](), initHashSet[string](),
     newSeq[PackageInfo](), newSeq[PackageInfo](), newSeq[string]())
 
   let (installed, checkAurUpgradeNames) = obtainInstalledWithAur(config)
@@ -1077,7 +1077,7 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
   let rpcAurTargets = fullTargets.filter(f => f.isAurTargetFull(config.aurRepo))
 
   let targetRpcInfos = lc[x | (t <- rpcAurTargets, x <- t.rpcInfo), RpcPackageInfo]
-  let targetRpcInfoNames = targetRpcInfos.map(i => i.name).toSet
+  let targetRpcInfoNames = targetRpcInfos.map(i => i.name).toHashSet
   let rpcInfos = targetRpcInfos & upgradeRpcInfos.filter(i => not (i.name in targetRpcInfoNames))
 
   let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
@@ -1114,7 +1114,8 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
     else:
       let pkgInfos = (buildPkgInfos & aurPkgInfos)
         .deduplicatePkgInfos(config, not printMode)
-      let targetNamesSet = (pacmanTargets & aurTargets).map(f => f.sync.target.reference.name).toSet
+      let targetNamesSet = (pacmanTargets & aurTargets)
+        .map(f => f.sync.target.reference.name).toHashSet
       let (finalPkgInfos, acceptedPkgInfos) = filterIgnoresAndConflicts(config, pkgInfos,
         targetNamesSet, installedTable, printMode, noconfirm)
 
@@ -1174,14 +1175,14 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
         clearPaths(paths)
         confirmAndResolveCode
       else:
-        let explicitsNamesSet = installed.filter(i => i.explicit).map(i => i.name).toSet
-        let depsNamesSet = installed.filter(i => not i.explicit).map(i => i.name).toSet
+        let explicitsNamesSet = installed.filter(i => i.explicit).map(i => i.name).toHashSet
+        let depsNamesSet = installed.filter(i => not i.explicit).map(i => i.name).toHashSet
         let keepNames = explicitsNamesSet + depsNamesSet + targetNamesSet
 
         let explicits = if args.check(%%%"asexplicit"):
             targetNamesSet + explicitsNamesSet + depsNamesSet
           elif args.check(%%%"asdeps"):
-            initSet[string]()
+            initHashSet[string]()
           else:
             explicitsNamesSet + (targetNamesSet - depsNamesSet)
 

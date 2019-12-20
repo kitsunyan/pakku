@@ -98,7 +98,7 @@ proc readConfigFile*(configFile: string):
   (table, wasError)
 
 proc ignored*(config: Config, name: string, groups: openArray[string]): bool =
-  name in config.common.ignorePkgs or (config.common.ignoreGroups * groups.toSet).len > 0
+  name in config.common.ignorePkgs or (config.common.ignoreGroups * groups.toHashSet).len > 0
 
 proc get*(colorMode: ColorMode): bool =
   case colorMode:

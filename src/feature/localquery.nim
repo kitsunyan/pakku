@@ -6,7 +6,7 @@ import
 proc handleQueryOrphans*(args: seq[Argument], config: Config): int =
   let (installed, orphans, _, alternatives) = withAlpmConfig(config, false, handle, dbs, errors):
     for e in errors: printError(config.color, e)
-    queryUnrequired(handle, true, false, initSet[string]())
+    queryUnrequired(handle, true, false, initHashSet[string]())
 
   let targets = args.packageTargets(false)
 
