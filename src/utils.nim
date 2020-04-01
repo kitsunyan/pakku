@@ -215,22 +215,18 @@ proc setgroups*(size: csize, groups: ptr cint): cint
   {.importc, header: "<grp.h>".}
 
 proc getUser(uid: int): User =
-  while true:
-    var pw = getpwent()
-    if pw == nil:
-      endpwent()
-      raise newException(CatchableError, "")
-    if pw.pw_uid.int == uid:
-      var groups: array[100, cint]
-      var ngroups: cint = 100
-      if getgrouplist(pw.pw_name, pw.pw_gid, addr(groups[0]), ngroups) < 0:
-        raise newException(CatchableError, "")
-      else:
-        let groupsSeq = groups[0 .. ngroups - 1].map(x => x.int)
-        let res = ($pw.pw_name, pw.pw_uid.int, pw.pw_gid.int, groupsSeq,
-          $pw.pw_dir, $pw.pw_shell)
-        endpwent()
-        return res
+  var pw = getpwuid(Uid(uid))
+  if pw == nil:
+    raise newException(CatchableError, "")
+  var groups: array[100, cint]
+  var ngroups: cint = 100
+  if getgrouplist(pw.pw_name, pw.pw_gid, addr(groups[0]), ngroups) < 0:
+    raise newException(CatchableError, "")
+  else:
+    let groupsSeq = groups[0 .. ngroups - 1].map(x => x.int)
+    let res = ($pw.pw_name, pw.pw_uid.int, pw.pw_gid.int, groupsSeq,
+      $pw.pw_dir, $pw.pw_shell)
+    return res
 
 let currentUser* = getUser(getuid().int)
 
