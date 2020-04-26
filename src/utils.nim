@@ -2,10 +2,10 @@ import
   hashes, options, os, posix, sequtils, strutils, sugar, tables
 
 type
-  HaltError* = object of Exception
+  HaltError* = object of CatchableError
     code*: int
 
-  CommandError* = object of Exception
+  CommandError* = object of CatchableError
     color*: Option[bool]
     error*: bool
 
@@ -211,11 +211,11 @@ proc forkWaitRedirect*(call: () -> int): tuple[output: seq[string], code: int] =
 proc getgrouplist*(user: cstring, group: Gid, groups: ptr cint, ngroups: var cint): cint
   {.importc, header: "<grp.h>".}
 
-proc setgroups*(size: csize, groups: ptr cint): cint
+proc setgroups*(size: csize_t, groups: ptr cint): cint
   {.importc, header: "<grp.h>".}
 
 proc getUser(uid: int): User =
-  var pw = getpwuid(Uid(uid))
+  var pw = getpwuid(uid.Uid)
   if pw == nil:
     raise newException(CatchableError, "")
   var groups: array[100, cint]
@@ -254,11 +254,11 @@ proc dropPrivileges*(): bool =
     let user = initialUser.unsafeGet
     var groups = user.groups.map(x => x.cint)
 
-    if setgroups(user.groups.len, addr(groups[0])) < 0:
+    if setgroups(user.groups.len.csize_t, addr(groups[0])) < 0:
       return false
-    if setgid((Gid) user.gid) != 0:
+    if setgid(user.gid.Gid) != 0:
       return false
-    if setuid((Uid) user.uid) != 0:
+    if setuid(user.uid.Uid) != 0:
       return false
 
     template replaceExisting(name: string, value: string) =
