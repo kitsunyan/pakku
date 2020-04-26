@@ -1,6 +1,6 @@
 import
   algorithm, options, os, posix, sequtils, sets, strutils, sugar, tables,
-  "../args", "../aur", "../config", "../common", "../format", "../lists", "../package",
+  "../args", "../aur", "../config", "../common", "../format", "../lc", "../lists", "../package",
     "../pacman", "../utils",
   "../wrapper/alpm"
 

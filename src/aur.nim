@@ -1,6 +1,6 @@
 import
   json, lists, options, re, sequtils, sets, strutils, sugar, tables,
-  package, utils,
+  lc, package, utils,
   "wrapper/curl"
 
 type

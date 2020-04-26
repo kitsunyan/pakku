@@ -1,6 +1,6 @@
 import
   options, os, osproc, posix, sequtils, sets, strutils, sugar, tables,
-  args, config, format, lists, package, pacman, utils,
+  args, config, format, lc, lists, package, pacman, utils,
   "wrapper/alpm"
 
 type

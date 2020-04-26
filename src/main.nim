@@ -1,6 +1,6 @@
 import
   options, os, posix, re, sequtils, strutils, sugar,
-  args, config, format, pacman, utils
+  args, config, format, lc, pacman, utils
 
 import
   "feature/localquery",

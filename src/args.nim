@@ -1,6 +1,6 @@
 import
   options, os, posix, sequtils, sets, strutils, sugar,
-  utils
+  lc, utils
 
 type
   ArgumentType* {.pure.} = enum

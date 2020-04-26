@@ -1,5 +1,6 @@
 import
-  options, os, re, sequtils, sets, strutils, sugar, tables, utils,
+  options, os, re, sequtils, sets, strutils, sugar, tables,
+  lc, utils,
   "wrapper/alpm"
 
 type

@@ -1,6 +1,6 @@
 import
   macros, options, posix, sequtils, sets, strutils, sugar, tables,
-  args, config, utils
+  args, config, lc, utils
 
 type
   OpGroup* {.pure.} = enum
