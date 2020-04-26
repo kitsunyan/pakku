@@ -130,7 +130,8 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
     newSeq[BaseTarget]())
 
   let (update, terminate) = if quiet:
-      (proc (a: int, b: int) {.closure.} = discard, proc () {.closure.} = discard)
+      (proc (a: int, b: int) {.closure, sideEffect.} = discard,
+        proc () {.closure, sideEffect.} = discard)
     else:
       printProgressShare(config.common.progressBar, tr"cloning repositories")
 
