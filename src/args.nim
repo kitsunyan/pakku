@@ -23,11 +23,11 @@ type
   ]
 
 iterator readLines(): string =
-  try:
-    while true:
+  while true:
+    try:
       yield readLine(stdin)
-  except:
-    discard
+    except:
+      break
 
 iterator splitSingle(valueFull: string, optionsWithParameter: HashSet[OptionKey],
   next: Option[string]): tuple[key: string, value: Option[string], consumedNext: bool] =

@@ -1,5 +1,5 @@
 VERSION = 0.14
-COPYRIGHT = 2018-2019 kitsunyan
+COPYRIGHT = 2018-2020 kitsunyan
 DIST_MODE = false
 
 MAN_PAGES = \
